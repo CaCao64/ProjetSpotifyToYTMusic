@@ -884,9 +884,11 @@
         <!-- Transfer Dashboard (Initially hidden or active when configured) -->
         <div id="transfer-dashboard" style="display: none;">
             <!-- Tab Buttons -->
-            <div class="tabs" style="margin-bottom: 2rem; display: flex; gap: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;">
+            <div class="tabs" style="margin-bottom: 2rem; display: flex; gap: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem; flex-wrap: wrap;">
                 <button class="btn btn-secondary active" id="btn-tab-spotify-to-yt" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🟢 Spotify ➔ 🔴 YouTube Music</button>
                 <button class="btn btn-secondary" id="btn-tab-yt-to-spotify" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🔴 YouTube Music ➔ 🟢 Spotify</button>
+                <button class="btn btn-secondary" id="btn-tab-yt-merge" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🔴 Fusionner Playlists YTM</button>
+                <button class="btn btn-secondary" id="btn-tab-yt-copy" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🔴 Copier YTM ➔ YTM</button>
             </div>
 
             <!-- Panel 1: Spotify -> YouTube Music -->
@@ -1205,6 +1207,125 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+            
+            <!-- Panel 3: Merge YTM Playlists -->
+            <div id="panel-yt-merge" class="tab-panel" style="display: none;">
+                <div class="card" style="margin-bottom: 2rem; border-radius: 0.75rem; border: 1px solid var(--border-color); background: var(--bg-card); padding: 1.75rem;">
+                    <h2 style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--youtube-red);">🔴 Fusionner des playlists YouTube Music</h2>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.5rem; line-height: 1.5;">
+                        Sélectionnez les playlists source à fusionner, puis indiquez le nom de la nouvelle playlist à créer pour contenir tous les titres.
+                    </p>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: start;">
+                        <!-- Col 1: Playlists List -->
+                        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <h3 style="font-size: 1rem; margin-bottom: 0.25rem; font-family: var(--font-display); font-weight: 700;">1. Playlists sources à fusionner :</h3>
+                            <div id="yt-merge-playlists-list" style="max-height: 280px; overflow-y: auto; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); padding: 1rem; border-radius: 0.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                                <p style="font-size: 0.85rem; color: var(--text-secondary);">Chargement des playlists YTM...</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Col 2: Settings and Execution -->
+                        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                            <h3 style="font-size: 1rem; font-family: var(--font-display); font-weight: 700; margin-bottom: 0.25rem;">2. Paramètres de la nouvelle playlist :</h3>
+                            
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="yt-merge-new-name" style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Nom de la nouvelle playlist</label>
+                                <input type="text" id="yt-merge-new-name" placeholder="Ex: Ma playlist fusionnée YTM" style="padding: 0.65rem 1rem; font-size: 0.85rem;">
+                            </div>
+                            
+                            <div class="switch-group" style="margin-top: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="yt-merge-skip-duplicates" checked style="width: 1.1rem; height: 1.1rem;">
+                                <label for="yt-merge-skip-duplicates" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">🔄 Éviter les doublons lors de la fusion</label>
+                            </div>
+                            
+                            <button class="btn btn-yt" id="btn-execute-yt-merge" style="margin-top: 1rem; text-transform: none; font-size: 0.9rem; padding: 0.75rem 1.5rem; font-weight: 700; border-radius: 0.5rem; cursor: pointer;">🔗 Lancer la fusion</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Merge Progress Card -->
+                <div class="progress-card" id="yt-merge-progress-card" style="display: none; margin-bottom: 1.5rem; border-radius: 0.75rem;">
+                    <div class="progress-header" style="margin-bottom: 0.75rem;">
+                        <span class="progress-title" id="yt-merge-progress-title" style="font-weight: 700;">Fusion en cours...</span>
+                    </div>
+                    <div class="console-log" id="yt-merge-console-log" style="height: 180px; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; border-radius: 0.5rem;"></div>
+                </div>
+            </div>
+
+            <!-- Panel 4: Copy YTM Playlist -->
+            <div id="panel-yt-copy" class="tab-panel" style="display: none;">
+                <div class="card" style="margin-bottom: 2rem; border-radius: 0.75rem; border: 1px solid var(--border-color); background: var(--bg-card); padding: 1.75rem;">
+                    <h2 style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--youtube-red);">🔴 Copier une playlist YouTube Music</h2>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.5rem; line-height: 1.5;">
+                        Copiez le contenu d'une de vos playlists vers une autre. Vous pouvez copier vers le même compte ou vers un autre compte YouTube Music.
+                    </p>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: start;">
+                        <!-- Col 1: Source Playlist -->
+                        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                            <h3 style="font-size: 1rem; font-family: var(--font-display); font-weight: 700; margin-bottom: 0.25rem;">1. Source et Destination :</h3>
+                            
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="yt-copy-source-select" style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Playlist Source</label>
+                                <select id="yt-copy-source-select" style="padding: 0.65rem 1rem; font-size: 0.85rem; width: 100%;">
+                                    <option value="">Chargement des playlists YTM...</option>
+                                </select>
+                            </div>
+                            
+                            <div class="switch-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="yt-copy-use-other-account" style="width: 1.1rem; height: 1.1rem;">
+                                <label for="yt-copy-use-other-account" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer; font-weight: 600;">👤 Copier vers un autre compte YouTube Music</label>
+                            </div>
+                            
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="yt-copy-dest-select" style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Playlist Destination</label>
+                                <select id="yt-copy-dest-select" style="padding: 0.65rem 1rem; font-size: 0.85rem; width: 100%;">
+                                    <option value="__new__">➕ [Créer une nouvelle playlist]</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group" id="yt-copy-new-playlist-name-group" style="margin-bottom: 0;">
+                                <label for="yt-copy-new-name" style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Nom de la nouvelle playlist destination</label>
+                                <input type="text" id="yt-copy-new-name" placeholder="Ex: Copie de ma playlist" style="padding: 0.65rem 1rem; font-size: 0.85rem; width: 100%;">
+                            </div>
+                        </div>
+                        
+                        <!-- Col 2: Secondary Account Setup & Settings -->
+                        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                            <!-- Collapsible Setup for Secondary Account -->
+                            <div id="yt-copy-secondary-setup-section" style="display: none; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 0.5rem;">
+                                <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--youtube-red); font-family: var(--font-display); font-weight: 700;">🔑 Configurer le compte YTM de destination</h4>
+                                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.75rem; line-height: 1.4;">
+                                    Collez ci-dessous les en-têtes (Request Headers) de votre deuxième compte (obtenus de la même manière en navigation privée).
+                                </p>
+                                <textarea id="yt-headers-secondary" placeholder="Collez les Request Headers du 2ème compte ici..." style="height: 110px; font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%; font-family: monospace;"></textarea>
+                                <button class="btn btn-secondary" id="btn-save-yt-secondary" style="font-size: 0.75rem; padding: 0.5rem 1rem; text-transform: none; letter-spacing: normal; width: auto; font-weight: 600;">Sauvegarder Compte Destination</button>
+                                <div id="yt-secondary-status-msg" style="font-size: 0.75rem; margin-top: 0.6rem; color: var(--text-secondary); font-weight: 500;">
+                                    Statut : Compte non configuré ❌
+                                </div>
+                            </div>
+                            
+                            <h3 style="font-size: 1rem; font-family: var(--font-display); font-weight: 700; margin-bottom: 0.25rem;">2. Paramètres de copie :</h3>
+                            
+                            <div class="switch-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" id="yt-copy-skip-duplicates" checked style="width: 1.1rem; height: 1.1rem;">
+                                <label for="yt-copy-skip-duplicates" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">🔄 Éviter les doublons lors de la copie</label>
+                            </div>
+                            
+                            <button class="btn btn-yt" id="btn-execute-yt-copy" style="margin-top: 1rem; text-transform: none; font-size: 0.9rem; padding: 0.75rem 1.5rem; font-weight: 700; border-radius: 0.5rem; cursor: pointer;">📋 Lancer la copie dans l'ordre</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Copy Progress Card -->
+                <div class="progress-card" id="yt-copy-progress-card" style="display: none; margin-bottom: 1.5rem; border-radius: 0.75rem;">
+                    <div class="progress-header" style="margin-bottom: 0.75rem;">
+                        <span class="progress-title" id="yt-copy-progress-title" style="font-weight: 700;">Copie en cours...</span>
+                    </div>
+                    <div class="console-log" id="yt-copy-console-log" style="height: 180px; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; border-radius: 0.5rem;"></div>
                 </div>
             </div>
         </div>

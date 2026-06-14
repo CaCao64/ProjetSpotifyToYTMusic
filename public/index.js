@@ -134,6 +134,46 @@ function setupEventListeners() {
         btnYtCopyScriptDirect.addEventListener('click', copyTransferScript);
     }
     
+    // Tabs Navigation (Merge & Copy)
+    const btnTabYtMerge = document.getElementById('btn-tab-yt-merge');
+    const btnTabYtCopy = document.getElementById('btn-tab-yt-copy');
+    if (btnTabYtMerge) btnTabYtMerge.addEventListener('click', () => switchTab('yt-merge'));
+    if (btnTabYtCopy) btnTabYtCopy.addEventListener('click', () => switchTab('yt-copy'));
+    
+    // YTM Merge & Copy events
+    const btnSaveYtSecondary = document.getElementById('btn-save-yt-secondary');
+    if (btnSaveYtSecondary) btnSaveYtSecondary.addEventListener('click', saveYtSecondaryConfig);
+    
+    const btnExecuteYtMerge = document.getElementById('btn-execute-yt-merge');
+    if (btnExecuteYtMerge) btnExecuteYtMerge.addEventListener('click', executeYtMerge);
+    
+    const btnExecuteYtCopy = document.getElementById('btn-execute-yt-copy');
+    if (btnExecuteYtCopy) btnExecuteYtCopy.addEventListener('click', executeYtCopy);
+    
+    const checkboxOtherAccount = document.getElementById('yt-copy-use-other-account');
+    if (checkboxOtherAccount) {
+        checkboxOtherAccount.addEventListener('change', async () => {
+            const setupSection = document.getElementById('yt-copy-secondary-setup-section');
+            if (checkboxOtherAccount.checked) {
+                if (setupSection) setupSection.style.display = 'block';
+                await populateCopyPlaylistsDropdownDestSecondary();
+            } else {
+                if (setupSection) setupSection.style.display = 'none';
+                populateCopyPlaylistsDropdownDestPrimary();
+            }
+        });
+    }
+    
+    const copyDestSelect = document.getElementById('yt-copy-dest-select');
+    if (copyDestSelect) {
+        copyDestSelect.addEventListener('change', () => {
+            const group = document.getElementById('yt-copy-new-playlist-name-group');
+            if (group) {
+                group.style.display = copyDestSelect.value === '__new__' ? 'block' : 'none';
+            }
+        });
+    }
+    
     // Dashboard actions (Spotify ➔ YTM)
     el.playlistSelect.addEventListener('change', handlePlaylistSelectChange);
     if (el.btnLoadSpotifySongs) {
@@ -2099,24 +2139,46 @@ function switchTab(tab) {
     
     const btnTabSpotifyToYt = document.getElementById('btn-tab-spotify-to-yt');
     const btnTabYtToSpotify = document.getElementById('btn-tab-yt-to-spotify');
+    const btnTabYtMerge = document.getElementById('btn-tab-yt-merge');
+    const btnTabYtCopy = document.getElementById('btn-tab-yt-copy');
+    
     const panelSpotify = document.getElementById('panel-spotify-to-yt');
     const panelYt = document.getElementById('panel-yt-to-spotify');
+    const panelMerge = document.getElementById('panel-yt-merge');
+    const panelCopy = document.getElementById('panel-yt-copy');
+    
+    // Deactivate all buttons
+    if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.remove('active');
+    if (btnTabYtToSpotify) btnTabYtToSpotify.classList.remove('active');
+    if (btnTabYtMerge) btnTabYtMerge.classList.remove('active');
+    if (btnTabYtCopy) btnTabYtCopy.classList.remove('active');
+    
+    // Deactivate all panels
+    if (panelSpotify) panelSpotify.classList.remove('active');
+    if (panelYt) panelYt.classList.remove('active');
+    if (panelMerge) panelMerge.classList.remove('active');
+    if (panelCopy) panelCopy.classList.remove('active');
     
     if (tab === 'spotify-to-yt') {
         if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.add('active');
-        if (btnTabYtToSpotify) btnTabYtToSpotify.classList.remove('active');
         if (panelSpotify) panelSpotify.classList.add('active');
-        if (panelYt) panelYt.classList.remove('active');
-    } else {
-        if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.remove('active');
+    } else if (tab === 'yt-to-spotify') {
         if (btnTabYtToSpotify) btnTabYtToSpotify.classList.add('active');
-        if (panelSpotify) panelSpotify.classList.remove('active');
         if (panelYt) panelYt.classList.add('active');
         
         // Dynamic fetch of Spotify playlists if not loaded yet
         if (ytState.playlists.length === 0 && appState.spotifyAuthorized) {
             loadSpotifyPlaylists();
         }
+    } else if (tab === 'yt-merge') {
+        if (btnTabYtMerge) btnTabYtMerge.classList.add('active');
+        if (panelMerge) panelMerge.classList.add('active');
+        populateMergePlaylistsList();
+    } else if (tab === 'yt-copy') {
+        if (btnTabYtCopy) btnTabYtCopy.classList.add('active');
+        if (panelCopy) panelCopy.classList.add('active');
+        populateCopyPlaylistsDropdown();
+        checkSecondaryAccountStatus();
     }
 }
 
@@ -3328,4 +3390,301 @@ window.robustCopyText = async function(text) {
     }
     return copied;
 };
+
+// ==========================================
+// YOUTUBE MUSIC MERGE & COPY LOGIC
+// ==========================================
+
+async function checkSecondaryAccountStatus() {
+    const statusMsg = document.getElementById('yt-secondary-status-msg');
+    if (!statusMsg) return;
+    try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        if (data.ytMusicSecondaryConfigured) {
+            statusMsg.innerHTML = 'Statut : Compte connecté ✅';
+        } else {
+            statusMsg.innerHTML = 'Statut : Compte non configuré ❌';
+        }
+    } catch (e) {
+        statusMsg.innerHTML = 'Statut : Erreur de communication ❌';
+    }
+}
+
+async function saveYtSecondaryConfig() {
+    const btn = document.getElementById('btn-save-yt-secondary');
+    const headersArea = document.getElementById('yt-headers-secondary');
+    if (!btn || !headersArea) return;
+    
+    const ytHeadersSecondary = headersArea.value.trim();
+    if (!ytHeadersSecondary) {
+        alert('Veuillez coller des en-têtes valides pour le compte de destination.');
+        return;
+    }
+    
+    btn.setAttribute('disabled', 'true');
+    btn.textContent = 'Sauvegarde...';
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ytHeadersSecondary })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert('Authentification du deuxième compte YTM sauvegardée avec succès !');
+            headersArea.value = '';
+            await checkSecondaryAccountStatus();
+            const checkboxOtherAccount = document.getElementById('yt-copy-use-other-account');
+            if (checkboxOtherAccount && checkboxOtherAccount.checked) {
+                await populateCopyPlaylistsDropdownDestSecondary();
+            }
+        } else {
+            alert('Erreur lors de la configuration : ' + (data.error || 'Erreur inconnue'));
+        }
+    } catch (e) {
+        alert('Erreur de communication : ' + e.message);
+    } finally {
+        btn.removeAttribute('disabled');
+        btn.textContent = 'Sauvegarde Compte Destination';
+    }
+}
+
+function populateMergePlaylistsList() {
+    const container = document.getElementById('yt-merge-playlists-list');
+    if (!container) return;
+    
+    if (appState.playlists.length === 0) {
+        container.innerHTML = '<p style="font-size: 0.85rem; color: var(--text-secondary);">Aucune playlist trouvée. Veuillez d\'abord charger votre bibliothèque dans l\'onglet YT Music.</p>';
+        return;
+    }
+    
+    let html = '';
+    appState.playlists.forEach((p, idx) => {
+        html += `
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" class="yt-merge-playlist-cb" id="merge-cb-${p.id}" value="${p.id}" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                <label for="merge-cb-${p.id}" style="font-size: 0.85rem; cursor: pointer; color: var(--text-primary); font-weight: 500;">${p.title}</label>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+function populateCopyPlaylistsDropdown() {
+    const sourceSelect = document.getElementById('yt-copy-source-select');
+    if (!sourceSelect) return;
+    
+    if (appState.playlists.length === 0) {
+        sourceSelect.innerHTML = '<option value="">Aucune playlist chargée</option>';
+        return;
+    }
+    
+    let html = '';
+    appState.playlists.forEach(p => {
+        html += `<option value="${p.id}">${p.title}</option>`;
+    });
+    sourceSelect.innerHTML = html;
+    
+    const checkboxOtherAccount = document.getElementById('yt-copy-use-other-account');
+    if (checkboxOtherAccount && checkboxOtherAccount.checked) {
+        populateCopyPlaylistsDropdownDestSecondary();
+    } else {
+        populateCopyPlaylistsDropdownDestPrimary();
+    }
+}
+
+function populateCopyPlaylistsDropdownDestPrimary() {
+    const destSelect = document.getElementById('yt-copy-dest-select');
+    if (!destSelect) return;
+    
+    let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
+    appState.playlists.forEach(p => {
+        html += `<option value="${p.id}">${p.title}</option>`;
+    });
+    destSelect.innerHTML = html;
+    
+    const nameGroup = document.getElementById('yt-copy-new-playlist-name-group');
+    if (nameGroup) nameGroup.style.display = destSelect.value === '__new__' ? 'block' : 'none';
+}
+
+async function populateCopyPlaylistsDropdownDestSecondary() {
+    const destSelect = document.getElementById('yt-copy-dest-select');
+    if (!destSelect) return;
+    
+    destSelect.innerHTML = '<option value="">Chargement des playlists...</option>';
+    
+    try {
+        const res = await fetch('/api/ytmusic/secondary/playlists');
+        const data = await res.json();
+        if (data.success && data.playlists) {
+            let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
+            data.playlists.forEach(p => {
+                html += `<option value="${p.id}">${p.title}</option>`;
+            });
+            destSelect.innerHTML = html;
+        } else {
+            destSelect.innerHTML = '<option value="__new__">➕ [Créer une nouvelle playlist] (Erreur chargement playlists)</option>';
+        }
+    } catch (e) {
+        destSelect.innerHTML = '<option value="__new__">➕ [Créer une nouvelle playlist] (Erreur communication)</option>';
+    }
+    
+    const nameGroup = document.getElementById('yt-copy-new-playlist-name-group');
+    if (nameGroup) nameGroup.style.display = destSelect.value === '__new__' ? 'block' : 'none';
+}
+
+async function executeYtMerge() {
+    const btn = document.getElementById('btn-execute-yt-merge');
+    const newNameInput = document.getElementById('yt-merge-new-name');
+    const skipDuplicates = document.getElementById('yt-merge-skip-duplicates').checked;
+    const progressCard = document.getElementById('yt-merge-progress-card');
+    const consoleLog = document.getElementById('yt-merge-console-log');
+    
+    if (!btn || !newNameInput || !progressCard || !consoleLog) return;
+    
+    const newPlaylistName = newNameInput.value.trim();
+    if (!newPlaylistName) {
+        alert('Veuillez spécifier le nom de la nouvelle playlist.');
+        return;
+    }
+    
+    const checkedPlaylists = [];
+    document.querySelectorAll('.yt-merge-playlist-cb:checked').forEach(cb => {
+        checkedPlaylists.push(cb.value);
+    });
+    
+    if (checkedPlaylists.length < 1) {
+        alert('Veuillez sélectionner au moins une playlist source à fusionner.');
+        return;
+    }
+    
+    btn.setAttribute('disabled', 'true');
+    btn.textContent = 'Fusion en cours...';
+    progressCard.style.display = 'block';
+    consoleLog.innerHTML = '';
+    
+    const log = (msg, type = 'info') => {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.style.color = type === 'success' ? '#1db954' : (type === 'error' ? '#ef4444' : '#ffffff');
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        consoleLog.appendChild(entry);
+        consoleLog.scrollTop = consoleLog.scrollHeight;
+    };
+    
+    log(`Lancement de la fusion de ${checkedPlaylists.length} playlists...`, 'info');
+    
+    try {
+        const res = await fetch('/api/ytmusic/merge-playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sourcePlaylistIds: checkedPlaylists,
+                newPlaylistName,
+                skipDuplicates
+            })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            log(`Fusion réussie ! Nouvelle playlist créée avec succès. ID: ${data.playlistId}`, 'success');
+            log(`${data.trackCount} titres ont été insérés dans la playlist.`, 'success');
+            alert('🎉 Fusion de playlists terminée avec succès !');
+            newNameInput.value = '';
+            document.querySelectorAll('.yt-merge-playlist-cb').forEach(cb => cb.checked = false);
+            await loadPlaylists();
+            populateMergePlaylistsList();
+        } else {
+            log(`Échec de la fusion : ${data.error || 'Erreur inconnue'}`, 'error');
+            alert('❌ Échec de la fusion de playlists.');
+        }
+    } catch (e) {
+        log(`Erreur de communication : ${e.message}`, 'error');
+        alert('❌ Erreur de communication.');
+    } finally {
+        btn.removeAttribute('disabled');
+        btn.textContent = '🔗 Lancer la fusion';
+    }
+}
+
+async function executeYtCopy() {
+    const btn = document.getElementById('btn-execute-yt-copy');
+    const sourceSelect = document.getElementById('yt-copy-source-select');
+    const destSelect = document.getElementById('yt-copy-dest-select');
+    const newNameInput = document.getElementById('yt-copy-new-name');
+    const useSecondary = document.getElementById('yt-copy-use-other-account').checked;
+    const skipDuplicates = document.getElementById('yt-copy-skip-duplicates').checked;
+    const progressCard = document.getElementById('yt-copy-progress-card');
+    const consoleLog = document.getElementById('yt-copy-console-log');
+    
+    if (!btn || !sourceSelect || !destSelect || !newNameInput || !progressCard || !consoleLog) return;
+    
+    const sourcePlaylistId = sourceSelect.value;
+    if (!sourcePlaylistId) {
+        alert('Veuillez sélectionner une playlist source.');
+        return;
+    }
+    
+    const destPlaylistId = destSelect.value;
+    const destPlaylistName = newNameInput.value.trim();
+    if (destPlaylistId === '__new__' && !destPlaylistName) {
+        alert('Veuillez entrer le nom de la nouvelle playlist destination.');
+        return;
+    }
+    
+    btn.setAttribute('disabled', 'true');
+    btn.textContent = 'Copie en cours...';
+    progressCard.style.display = 'block';
+    consoleLog.innerHTML = '';
+    
+    const log = (msg, type = 'info') => {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.style.color = type === 'success' ? '#1db954' : (type === 'error' ? '#ef4444' : '#ffffff');
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        consoleLog.appendChild(entry);
+        consoleLog.scrollTop = consoleLog.scrollHeight;
+    };
+    
+    log(`Lancement de la copie de la playlist source (ID: ${sourcePlaylistId})...`, 'info');
+    if (useSecondary) {
+        log(`Destination : Autre compte YouTube Music.`, 'info');
+    } else {
+        log(`Destination : Même compte YouTube Music.`, 'info');
+    }
+    
+    try {
+        const res = await fetch('/api/ytmusic/copy-playlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sourcePlaylistId,
+                destPlaylistId,
+                destPlaylistName,
+                useSecondaryAccount: useSecondary,
+                skipDuplicates
+            })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            log(`Copie réussie ! ID Playlist destination : ${data.playlistId}`, 'success');
+            log(`${data.trackCount} titres copiés dans l'ordre original.`, 'success');
+            alert('🎉 Copie de playlist terminée avec succès !');
+            newNameInput.value = '';
+            await loadPlaylists();
+            populateCopyPlaylistsDropdown();
+        } else {
+            log(`Échec de la copie : ${data.error || 'Erreur inconnue'}`, 'error');
+            alert('❌ Échec de la copie de la playlist.');
+        }
+    } catch (e) {
+        log(`Erreur de communication : ${e.message}`, 'error');
+        alert('❌ Erreur de communication.');
+    } finally {
+        btn.removeAttribute('disabled');
+        btn.textContent = '📋 Lancer la copie dans l\'ordre';
+    }
+}
 

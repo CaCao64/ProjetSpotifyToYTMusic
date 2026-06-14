@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 const CONFIG_DIR = path.join(__dirname, 'data');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const YT_AUTH_PATH = path.join(CONFIG_DIR, 'browser.json');
+const YT_AUTH_PATH_SECONDARY = path.join(CONFIG_DIR, 'browser_secondary.json');
 
 // Ensure data directory exists
 if (!fs.existsSync(CONFIG_DIR)) {
@@ -163,12 +164,14 @@ app.get('/api/status', (req, res) => {
     const spotifyConfigured = !!(config.spotifyClientId && config.spotifyClientSecret) || usingWebPlayerToken;
     const spotifyAuthorized = !!config.spotifyRefreshToken || usingWebPlayerToken;
     const ytMusicConfigured = fs.existsSync(YT_AUTH_PATH);
+    const ytMusicSecondaryConfigured = fs.existsSync(YT_AUTH_PATH_SECONDARY);
     
     res.json({
         spotifyConfigured,
         spotifyAuthorized,
         spotifyClientId: config.spotifyClientId || '',
         ytMusicConfigured,
+        ytMusicSecondaryConfigured,
         usingWebPlayerToken,
         spotifyWebPlayerToken: config.spotifyWebPlayerToken || ''
     });
@@ -176,7 +179,7 @@ app.get('/api/status', (req, res) => {
 
 // API: Save Credentials
 app.post('/api/config', async (req, res) => {
-    const { spotifyClientId, spotifyClientSecret, ytHeaders, spotifyWebPlayerToken } = req.body;
+    const { spotifyClientId, spotifyClientSecret, ytHeaders, ytHeadersSecondary, spotifyWebPlayerToken } = req.body;
     const config = loadConfig();
     
     if (spotifyClientId !== undefined) config.spotifyClientId = spotifyClientId.trim();
@@ -191,6 +194,13 @@ app.post('/api/config', async (req, res) => {
                 action: 'setup_auth',
                 headers_raw: ytHeaders,
                 filepath: YT_AUTH_PATH
+            });
+        }
+        if (ytHeadersSecondary && ytHeadersSecondary.trim()) {
+            await runPythonHelper({
+                action: 'setup_auth',
+                headers_raw: ytHeadersSecondary,
+                filepath: YT_AUTH_PATH_SECONDARY
             });
         }
         res.json({ success: true });
@@ -456,6 +466,178 @@ app.get('/api/ytmusic/playlists/:id/tracks', async (req, res) => {
             playlist_id: playlistId
         });
         res.json({ success: true, tracks: response.tracks });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Get Playlists for Secondary YT Music Account
+app.get('/api/ytmusic/secondary/playlists', async (req, res) => {
+    try {
+        if (!fs.existsSync(YT_AUTH_PATH_SECONDARY)) {
+            return res.json({ success: true, playlists: [] });
+        }
+        const response = await runPythonHelper({
+            action: 'get_playlists',
+            auth_path: YT_AUTH_PATH_SECONDARY
+        });
+        res.json({ success: true, playlists: response.playlists });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Merge YouTube Music Playlists
+app.post('/api/ytmusic/merge-playlists', async (req, res) => {
+    const { sourcePlaylistIds, newPlaylistName, skipDuplicates } = req.body;
+    if (!sourcePlaylistIds || !Array.isArray(sourcePlaylistIds) || sourcePlaylistIds.length === 0 || !newPlaylistName) {
+        return res.status(400).json({ success: false, error: 'Source playlists and new playlist name are required.' });
+    }
+    
+    try {
+        // 1. Create the new YTM playlist
+        const createRes = await runPythonHelper({
+            action: 'create_playlist',
+            auth_path: YT_AUTH_PATH,
+            title: newPlaylistName,
+            description: 'Playlist fusionnée depuis plusieurs playlists YouTube Music'
+        });
+        const newPlaylistId = createRes.playlist_id;
+        
+        // 2. Fetch tracks from all selected source playlists
+        let allVideoIds = [];
+        const seenVideoIds = new Set();
+        
+        for (const playlistId of sourcePlaylistIds) {
+            const tracksRes = await runPythonHelper({
+                action: 'get_playlist_tracks',
+                auth_path: YT_AUTH_PATH,
+                playlist_id: playlistId
+            });
+            const tracks = tracksRes.tracks || [];
+            
+            for (const t of tracks) {
+                if (t.videoId) {
+                    if (skipDuplicates) {
+                        if (!seenVideoIds.has(t.videoId)) {
+                            seenVideoIds.add(t.videoId);
+                            allVideoIds.push(t.videoId);
+                        }
+                    } else {
+                        allVideoIds.push(t.videoId);
+                    }
+                }
+            }
+        }
+        
+        // 3. Add tracks to the new playlist
+        if (allVideoIds.length > 0) {
+            const batchSize = 100;
+            for (let i = 0; i < allVideoIds.length; i += batchSize) {
+                const batch = allVideoIds.slice(i, i + batchSize);
+                await runPythonHelper({
+                    action: 'add_tracks',
+                    auth_path: YT_AUTH_PATH,
+                    playlist_id: newPlaylistId,
+                    video_ids: batch,
+                    duplicates: !skipDuplicates
+                });
+            }
+        }
+        
+        res.json({ success: true, playlistId: newPlaylistId, trackCount: allVideoIds.length });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Copy YTM Playlist to another YTM Playlist (same or different account)
+app.post('/api/ytmusic/copy-playlist', async (req, res) => {
+    const { sourcePlaylistId, destPlaylistId, destPlaylistName, useSecondaryAccount, skipDuplicates } = req.body;
+    
+    if (!sourcePlaylistId || !destPlaylistId) {
+        return res.status(400).json({ success: false, error: 'Source playlist ID and destination playlist ID are required.' });
+    }
+    
+    try {
+        const destAuthPath = useSecondaryAccount ? YT_AUTH_PATH_SECONDARY : YT_AUTH_PATH;
+        if (useSecondaryAccount && !fs.existsSync(YT_AUTH_PATH_SECONDARY)) {
+            return res.status(400).json({ success: false, error: 'Secondary YTM account not configured.' });
+        }
+        
+        // 1. Fetch tracks from the source playlist (always using primary account)
+        const tracksRes = await runPythonHelper({
+            action: 'get_playlist_tracks',
+            auth_path: YT_AUTH_PATH,
+            playlist_id: sourcePlaylistId
+        });
+        const tracks = tracksRes.tracks || [];
+        
+        if (tracks.length === 0) {
+            return res.json({ success: true, message: 'Source playlist has no tracks.', trackCount: 0 });
+        }
+        
+        // 2. Resolve destination playlist ID (create new if specified)
+        let resolvedDestPlaylistId = destPlaylistId;
+        if (destPlaylistId === '__new__') {
+            const title = destPlaylistName || 'YTM Copy Playlist';
+            const createRes = await runPythonHelper({
+                action: 'create_playlist',
+                auth_path: destAuthPath,
+                title: title,
+                description: 'Copie de playlist YouTube Music'
+            });
+            resolvedDestPlaylistId = createRes.playlist_id;
+        }
+        
+        // 3. Fetch existing tracks in destination playlist to avoid duplicates if checked
+        let existingVideoIds = new Set();
+        if (skipDuplicates && resolvedDestPlaylistId !== '__new__') {
+            try {
+                const destTracksRes = await runPythonHelper({
+                    action: 'get_playlist_tracks',
+                    auth_path: destAuthPath,
+                    playlist_id: resolvedDestPlaylistId
+                });
+                const destTracks = destTracksRes.tracks || [];
+                destTracks.forEach(t => {
+                    if (t.videoId) existingVideoIds.add(t.videoId);
+                });
+            } catch (err) {
+                // Ignore errors reading dest playlist
+            }
+        }
+        
+        // 4. Collect video IDs to add
+        let videoIdsToAdd = [];
+        const seenInBatch = new Set();
+        
+        for (const t of tracks) {
+            if (t.videoId) {
+                const isDuplicate = skipDuplicates && (existingVideoIds.has(t.videoId) || seenInBatch.has(t.videoId));
+                if (!isDuplicate) {
+                    videoIdsToAdd.push(t.videoId);
+                    seenInBatch.add(t.videoId);
+                }
+            }
+        }
+        
+        // 5. Add tracks in batches of 100
+        if (videoIdsToAdd.length > 0) {
+            const batchSize = 100;
+            for (let i = 0; i < videoIdsToAdd.length; i += batchSize) {
+                const batch = videoIdsToAdd.slice(i, i + batchSize);
+                await runPythonHelper({
+                    action: 'add_tracks',
+                    auth_path: destAuthPath,
+                    playlist_id: resolvedDestPlaylistId,
+                    video_ids: batch,
+                    duplicates: !skipDuplicates
+                });
+            }
+        }
+        
+        res.json({ success: true, playlistId: resolvedDestPlaylistId, trackCount: videoIdsToAdd.length });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
