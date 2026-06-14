@@ -76,6 +76,12 @@ function runPythonHelper(data) {
 // Helper: Get Spotify Access Token (with refresh if expired)
 async function getSpotifyToken() {
     const config = loadConfig();
+    
+    // Prioritize the Web Player token if it exists
+    if (config.spotifyWebPlayerToken) {
+        return config.spotifyWebPlayerToken;
+    }
+    
     if (!config.spotifyClientId || !config.spotifyClientSecret) {
         throw new Error('Spotify credentials not configured');
     }
@@ -121,11 +127,13 @@ function handleSpotifyError(error, res) {
     const errorData = error.response?.data?.error;
     const msg = errorData?.message || error.message;
     const isPremiumError = status === 403 || msg.includes('403') || msg.toLowerCase().includes('premium');
+    const isExpiredToken = status === 401 || msg.includes('401') || msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('unauthorized');
     
     res.status(200).json({
         success: false,
-        error: isPremiumError ? 'Spotify Premium requis' : msg,
-        isPremiumError: !!isPremiumError
+        error: isExpiredToken ? 'Jeton d\'accès expiré' : (isPremiumError ? 'Spotify Premium requis' : msg),
+        isPremiumError: !!isPremiumError,
+        isExpiredToken: !!isExpiredToken
     });
 }
 
@@ -133,25 +141,29 @@ function handleSpotifyError(error, res) {
 // API: Get App Status and Config
 app.get('/api/status', (req, res) => {
     const config = loadConfig();
-    const spotifyConfigured = !!(config.spotifyClientId && config.spotifyClientSecret);
-    const spotifyAuthorized = !!config.spotifyRefreshToken;
+    const usingWebPlayerToken = !!config.spotifyWebPlayerToken;
+    const spotifyConfigured = !!(config.spotifyClientId && config.spotifyClientSecret) || usingWebPlayerToken;
+    const spotifyAuthorized = !!config.spotifyRefreshToken || usingWebPlayerToken;
     const ytMusicConfigured = fs.existsSync(YT_AUTH_PATH);
     
     res.json({
         spotifyConfigured,
         spotifyAuthorized,
         spotifyClientId: config.spotifyClientId || '',
-        ytMusicConfigured
+        ytMusicConfigured,
+        usingWebPlayerToken,
+        spotifyWebPlayerToken: config.spotifyWebPlayerToken || ''
     });
 });
 
 // API: Save Credentials
 app.post('/api/config', async (req, res) => {
-    const { spotifyClientId, spotifyClientSecret, ytHeaders } = req.body;
+    const { spotifyClientId, spotifyClientSecret, ytHeaders, spotifyWebPlayerToken } = req.body;
     const config = loadConfig();
     
-    if (spotifyClientId) config.spotifyClientId = spotifyClientId.trim();
-    if (spotifyClientSecret) config.spotifyClientSecret = spotifyClientSecret.trim();
+    if (spotifyClientId !== undefined) config.spotifyClientId = spotifyClientId.trim();
+    if (spotifyClientSecret !== undefined) config.spotifyClientSecret = spotifyClientSecret.trim();
+    if (spotifyWebPlayerToken !== undefined) config.spotifyWebPlayerToken = spotifyWebPlayerToken.trim();
     
     saveConfig(config);
     
