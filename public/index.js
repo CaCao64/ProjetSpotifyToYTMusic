@@ -1534,6 +1534,9 @@ function copyScraperScript() {
 }
 
 function getDirectTransferScript(tracks, playlistName) {
+    const escapedTracksJson = JSON.stringify(tracks).replace(/`/g, '\\`').replace(/\${/g, '\\${');
+    const escapedPlaylistName = playlistName.replace(/`/g, '\\`').replace(/\${/g, '\\${').replace(/"/g, '\\"');
+    
     return `(async () => {
     console.log("🚀 Démarrage du transfert YouTube Music vers Spotify (Sans Premium)...");
     
@@ -1556,7 +1559,7 @@ function getDirectTransferScript(tracks, playlistName) {
     }
     
     // 2. Embedded tracks data
-    const tracks = ${JSON.stringify(tracks)};
+    const tracks = ${escapedTracksJson};
     const totalTracks = tracks.length;
     console.log("🎵 " + totalTracks + " titres chargés pour le transfert.");
     
@@ -1569,7 +1572,7 @@ function getDirectTransferScript(tracks, playlistName) {
     
     let playlistId = 'LM';
     if (destChoice === '2') {
-        const playlistName = prompt("Entrez le nom de la nouvelle playlist Spotify :", "${playlistName.replace(/"/g, '\\"')}");
+        const playlistName = prompt("Entrez le nom de la nouvelle playlist Spotify :", "${escapedPlaylistName}");
         if (!playlistName) {
             console.log("❌ Nom de playlist invalide. Transfert annulé.");
             return;
