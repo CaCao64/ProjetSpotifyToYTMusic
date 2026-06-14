@@ -930,7 +930,8 @@ input[type="checkbox"].track-selector {
     box-shadow: 0 0 15px var(--youtube-glow);
 }
 
-.yt-logo-icon {
+.yt-logo-icon,
+.spotify-logo-icon {
     width: 16px;
     height: 16px;
     object-fit: contain;

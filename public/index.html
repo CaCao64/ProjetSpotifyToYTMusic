@@ -30,7 +30,7 @@
         <div class="grid-2" id="setup-section">
             <!-- Spotify Setup Card -->
             <div class="card">
-                <h2>🟢 Configurer Spotify</h2>
+                <h2><img src="Spotify_icon.ico" class="spotify-logo-icon" alt="Spotify" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 0.5rem; position: relative; top: -2px;"> Configurer Spotify</h2>
                 
                 <!-- Inner tab selection -->
                 <div class="setup-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); padding: 0.25rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
@@ -321,7 +321,7 @@
                         <summary style="padding: 0.4rem 0.8rem; font-size: 0.75rem; font-weight: 600;">Instructions de transfert</summary>
                         <div class="details-content" style="font-size: 0.75rem; padding: 0 1rem 1rem 1.5rem; line-height: 1.5;">
                             <ol>
-                                <li>Chargez vos titres YTM dans l'onglet <strong><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music ➔ 🟢 Spotify</strong>.</li>
+                                <li>Chargez vos titres YTM dans l'onglet <strong><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music ➔ <img src="Spotify_icon.ico" class="spotify-logo-icon" alt="Spotify"> Spotify</strong>.</li>
                                 <li>Cliquez sur <strong>Exporter résultats</strong> dans l'entête du tableau pour télécharger le fichier JSON.</li>
                                 <li>Ouvrez <a href="https://open.spotify.com" target="_blank" style="color: var(--youtube-red); text-decoration: underline;">Spotify Web Player</a> et connectez-vous.</li>
                                 <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> puis onglet <strong>Console</strong>).</li>
@@ -885,8 +885,8 @@
         <div id="transfer-dashboard" style="display: none;">
             <!-- Tab Buttons -->
             <div class="tabs" style="margin-bottom: 2rem; display: flex; gap: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem; flex-wrap: wrap;">
-                <button class="btn btn-secondary active" id="btn-tab-spotify-to-yt" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;">🟢 Spotify ➔ <img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music</button>
-                <button class="btn btn-secondary" id="btn-tab-yt-to-spotify" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;"><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music ➔ 🟢 Spotify</button>
+                <button class="btn btn-secondary active" id="btn-tab-spotify-to-yt" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;"><img src="Spotify_icon.ico" class="spotify-logo-icon" alt="Spotify"> Spotify ➔ <img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music</button>
+                <button class="btn btn-secondary" id="btn-tab-yt-to-spotify" style="display: none !important; width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; align-items: center; gap: 0.4rem;"><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> YouTube Music ➔ <img src="Spotify_icon.ico" class="spotify-logo-icon" alt="Spotify"> Spotify</button>
                 <button class="btn btn-secondary" id="btn-tab-yt-merge" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;"><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> Fusionner Playlists YTM</button>
                 <button class="btn btn-secondary" id="btn-tab-yt-copy" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;"><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> Copier YTM ➔ YTM</button>
             </div>
