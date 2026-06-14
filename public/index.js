@@ -233,6 +233,58 @@ function setupEventListeners() {
     el.modalSearchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') triggerModalSearchGlobal();
     });
+
+    // Setup tabs switching for Spotify config
+    const btnSetupTabWeb = document.getElementById('btn-setup-tab-web');
+    const btnSetupTabOauth = document.getElementById('btn-setup-tab-oauth');
+    const setupPanelWeb = document.getElementById('setup-panel-web');
+    const setupPanelOauth = document.getElementById('setup-panel-oauth');
+    
+    if (btnSetupTabWeb && btnSetupTabOauth && setupPanelWeb && setupPanelOauth) {
+        btnSetupTabWeb.addEventListener('click', () => {
+            btnSetupTabWeb.classList.add('active');
+            btnSetupTabWeb.style.background = '';
+            btnSetupTabWeb.style.color = '';
+            btnSetupTabOauth.classList.remove('active');
+            btnSetupTabOauth.style.background = 'transparent';
+            btnSetupTabOauth.style.color = 'var(--text-secondary)';
+            
+            setupPanelWeb.style.display = 'block';
+            setupPanelOauth.style.display = 'none';
+        });
+        
+        btnSetupTabOauth.addEventListener('click', () => {
+            btnSetupTabOauth.classList.add('active');
+            btnSetupTabOauth.style.background = '';
+            btnSetupTabOauth.style.color = '';
+            btnSetupTabWeb.classList.remove('active');
+            btnSetupTabWeb.style.background = 'transparent';
+            btnSetupTabWeb.style.color = 'var(--text-secondary)';
+            
+            setupPanelOauth.style.display = 'block';
+            setupPanelWeb.style.display = 'none';
+        });
+    }
+
+    // Save Spotify Web Player access token
+    const btnSaveWebToken = document.getElementById('btn-save-web-token');
+    const spotifyWebTokenInput = document.getElementById('spotify-web-token');
+    if (btnSaveWebToken && spotifyWebTokenInput) {
+        btnSaveWebToken.addEventListener('click', async () => {
+            const token = spotifyWebTokenInput.value.trim();
+            if (!token) {
+                if (confirm('Voulez-vous supprimer le jeton Web Player enregistré ?')) {
+                    await saveWebToken('');
+                }
+                return;
+            }
+            if (!token.startsWith('BQ')) {
+                alert('Le jeton Spotify Web Player doit commencer par "BQ".');
+                return;
+            }
+            await saveWebToken(token);
+        });
+    }
 }
 
 // Check configuration status
@@ -248,10 +300,36 @@ async function checkStatus() {
         // Update Spotify elements
         if (data.spotifyConfigured) {
             el.spotifyStatus.classList.add('active');
+            if (data.usingWebPlayerToken) {
+                el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Configuré (Jeton Web)';
+                const tokenInput = document.getElementById('spotify-web-token');
+                if (tokenInput && !tokenInput.value) {
+                    tokenInput.value = data.spotifyWebPlayerToken || '';
+                }
+                
+                // Show Web panel by default if using Web Player token
+                const btnSetupTabWeb = document.getElementById('btn-setup-tab-web');
+                const btnSetupTabOauth = document.getElementById('btn-setup-tab-oauth');
+                const setupPanelWeb = document.getElementById('setup-panel-web');
+                const setupPanelOauth = document.getElementById('setup-panel-oauth');
+                if (btnSetupTabWeb && btnSetupTabOauth && setupPanelWeb && setupPanelOauth) {
+                    btnSetupTabWeb.classList.add('active');
+                    btnSetupTabWeb.style.background = '';
+                    btnSetupTabWeb.style.color = '';
+                    btnSetupTabOauth.classList.remove('active');
+                    btnSetupTabOauth.style.background = 'transparent';
+                    btnSetupTabOauth.style.color = 'var(--text-secondary)';
+                    setupPanelWeb.style.display = 'block';
+                    setupPanelOauth.style.display = 'none';
+                }
+            } else {
+                el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Configuré';
+            }
             el.spotifyClientId.value = data.spotifyClientId;
             el.btnAuthSpotify.removeAttribute('disabled');
         } else {
             el.spotifyStatus.classList.remove('active');
+            el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Non Configuré';
             el.btnAuthSpotify.setAttribute('disabled', 'true');
         }
         
@@ -273,6 +351,26 @@ async function checkStatus() {
         }
     } catch (e) {
         console.error('Failed to fetch status:', e);
+    }
+}
+
+// Save Spotify Web Player Access Token helper
+async function saveWebToken(spotifyWebPlayerToken) {
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ spotifyWebPlayerToken })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(spotifyWebPlayerToken ? 'Jeton d\'accès Spotify Web Player enregistré !' : 'Jeton supprimé.');
+            checkStatus();
+        } else {
+            alert('Erreur: ' + data.error);
+        }
+    } catch (e) {
+        alert('Erreur de communication : ' + e.message);
     }
 }
 
@@ -415,11 +513,16 @@ async function loadSpotifySongs() {
             
             el.btnStartMatching.removeAttribute('disabled');
         } else {
+            const isExpired = data.isExpiredToken;
+            const errorMsg = isExpired 
+                ? "⚠️ Jeton d'accès Spotify Web expiré. Veuillez récupérer et copier un nouveau jeton dans le panneau de configuration."
+                : "⚠️ API Spotify bloquée (Spotify Premium requis). Veuillez configurer le Jeton Web Player (Option alternative Sans Premium) dans le panneau de configuration.";
+            
             if (warningBanner) warningBanner.style.display = 'block';
             el.tracksTableBody.innerHTML = `
                 <tr>
                     <td colspan="4" class="table-loading-overlay">
-                        <p style="color: var(--danger)">⚠️ API Spotify bloquée (Spotify Premium requis). Veuillez utiliser l'Option alternative : Sans Premium ci-dessus.</p>
+                        <p style="color: var(--danger)">${errorMsg}</p>
                     </td>
                 </tr>
             `;
@@ -991,7 +1094,8 @@ async function triggerModalSearchGlobal() {
             if (data.success && data.candidates) {
                 renderModalCandidates(data.candidates);
             } else {
-                el.modalCandidatesList.innerHTML = '<p style="text-align: center; font-size: 0.85rem; color: var(--danger);">Aucun résultat trouvé.</p>';
+                const msg = data.isExpiredToken ? "Jeton d'accès expiré. Veuillez renouveler le jeton." : "Aucun résultat trouvé.";
+                el.modalCandidatesList.innerHTML = `<p style="text-align: center; font-size: 0.85rem; color: var(--danger);">${msg}</p>`;
             }
         }
     } catch (e) {
@@ -1495,8 +1599,17 @@ async function loadSpotifyPlaylists() {
             select.innerHTML = html;
             handleSpotifyDestPlaylistSelectChange();
         } else {
-            select.innerHTML = '<option value="">⚠️ API Bloquée (Spotify Premium requis)</option>';
-            if (warningBanner) warningBanner.style.display = 'block';
+            const isExpired = data.isExpiredToken;
+            select.innerHTML = isExpired 
+                ? '<option value="">⚠️ Jeton expiré (à renouveler)</option>'
+                : '<option value="">⚠️ API Bloquée (Spotify Premium requis)</option>';
+            if (warningBanner) {
+                const p = warningBanner.querySelector('p');
+                if (isExpired && p) {
+                    p.innerHTML = "Votre jeton d'accès temporaire a expiré. Veuillez suivre les instructions pour en récupérer un nouveau.";
+                }
+                warningBanner.style.display = 'block';
+            }
         }
     } catch (e) {
         select.innerHTML = '<option value="">⚠️ Erreur de connexion API</option>';
