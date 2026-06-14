@@ -300,25 +300,27 @@
     
     let token;
     const captureToken = async () => {
+        const isSpotifyToken = (str) => typeof str === 'string' && /^BQ[a-zA-Z0-9_\-]{100,450}$/.test(str);
+        
         // 1. Try to extract from #session script element
         try {
             const sessionEl = document.getElementById('session') || document.querySelector('#session');
             if (sessionEl) {
                 const sessionData = JSON.parse(sessionEl.textContent || sessionEl.innerText);
-                if (sessionData.accessToken) {
+                if (isSpotifyToken(sessionData.accessToken)) {
                     console.log("Jeton d'accès extrait de la balise #session.");
                     return sessionData.accessToken;
                 }
             }
         } catch (e) {}
         
-        // 2. Scan all script tags on the page for "accessToken"
+        // 2. Scan all script tags on the page for accessToken
         try {
             for (const script of document.querySelectorAll('script')) {
                 const content = script.textContent || script.innerText || '';
                 if (content.includes('accessToken')) {
                     const match = content.match(/"accessToken"\s*:\s*"([^"]+)"/);
-                    if (match && match[1]) {
+                    if (match && isSpotifyToken(match[1])) {
                         console.log("Jeton d'accès extrait des scripts de la page.");
                         return match[1];
                     }
@@ -326,7 +328,88 @@
             }
         } catch (e) {}
         
-        // 3. Intercept background/user fetch and XMLHttpRequest calls to spotify.com
+        // 3. Scan LocalStorage & SessionStorage
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const val = localStorage.getItem(key);
+                if (isSpotifyToken(val)) {
+                    console.log("Jeton d'accès extrait de localStorage.");
+                    return val;
+                }
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) {
+                                console.log("Jeton d'accès extrait de localStorage (JSON: " + key + "." + k + ").");
+                                return parsed[k];
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        
+        try {
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                const val = sessionStorage.getItem(key);
+                if (isSpotifyToken(val)) {
+                    console.log("Jeton d'accès extrait de sessionStorage.");
+                    return val;
+                }
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) {
+                                console.log("Jeton d'accès extrait de sessionStorage (JSON: " + key + "." + k + ").");
+                                return parsed[k];
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        
+        // 4. Scan React Fiber tree on DOM nodes for accessToken (Spotify is a React app)
+        try {
+            const evaluator = (obj, visited = new Set()) => {
+                if (!obj || typeof obj !== 'object' || visited.has(obj)) return null;
+                visited.add(obj);
+                
+                for (const key in obj) {
+                    try {
+                        const val = obj[key];
+                        if (isSpotifyToken(val)) {
+                            return val;
+                        }
+                        if (val && typeof val === 'object') {
+                            const res = evaluator(val, visited);
+                            if (res) return res;
+                        }
+                    } catch (e) {}
+                }
+                return null;
+            };
+            
+            const allElements = document.getElementsByTagName('*');
+            for (let i = 0; i < allElements.length; i++) {
+                const el = allElements[i];
+                for (const key of Object.keys(el)) {
+                    if (key.startsWith('__react') || key.startsWith('__reactFiber') || key.startsWith('__reactProps') || key.startsWith('__reactContainer')) {
+                        const token = evaluator(el[key]);
+                        if (token) {
+                            console.log("Jeton d'accès extrait de l'arbre React DOM.");
+                            return token;
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+        
+        // 5. Intercept background/user fetch and XMLHttpRequest calls to spotify.com (fallback)
         return new Promise((resolve) => {
             console.log("En attente de détection automatique du jeton d'accès (patientez 2-3 secondes)...");
             const originalFetch = window.fetch;
@@ -350,7 +433,7 @@
                 try {
                     if (header && header.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
                         const t = value.substring(7).trim();
-                        if (t && !resolved) {
+                        if (isSpotifyToken(t) && !resolved) {
                             resolved = true;
                             clearTimeout(timeoutId);
                             cleanup();
@@ -393,7 +476,7 @@
                         
                         if (auth && auth.startsWith('Bearer ')) {
                             const t = auth.substring(7).trim();
-                            if (t && !resolved) {
+                            if (isSpotifyToken(t) && !resolved) {
                                 resolved = true;
                                 clearTimeout(timeoutId);
                                 cleanup();
