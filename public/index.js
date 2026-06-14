@@ -1949,15 +1949,41 @@ function getDirectTransferScript(tracks, playlistName) {
     
     if (destChoice === '4') {
         const uris = matchedSpotifyIds.map(id => 'spotify:track:' + id).join('\\n');
-        if (typeof copy === 'function') {
-            copy(uris);
-        } else if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(uris);
+        console.log("========================================");
+        console.log("📋 LISTE DES URIs SPOTIFY :");
+        console.log(uris);
+        console.log("========================================");
+        
+        const robustConsoleCopy = async (val) => {
+            let ok = false;
+            try { copy(val); ok = true; } catch (e) {}
+            if (!ok) {
+                try { await navigator.clipboard.writeText(val); ok = true; } catch (e) {}
+            }
+            if (!ok) {
+                try {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = val;
+                    textarea.style.position = 'fixed';
+                    textarea.style.top = '0';
+                    textarea.style.left = '0';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    ok = true;
+                } catch (e) {}
+            }
+            return ok;
+        };
+        
+        const copied = await robustConsoleCopy(uris);
+        if (copied) {
+            alert("🎉 " + matchedSpotifyIds.length + " URIs Spotify ont été copiées dans le presse-papiers !\\n\\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans passer par l'API.\\n\\nSi la copie a échoué, vous pouvez copier la liste depuis la console (F12).");
         } else {
-            console.log("📋 Copiez la liste d'URIs ci-dessous :");
-            console.log(uris);
+            prompt("🎉 " + matchedSpotifyIds.length + " URIs Spotify trouvées !\\nLa copie automatique a été bloquée par le navigateur.\\n\\nFaites Ctrl+C pour copier la liste ci-dessous, puis Ctrl+V dans votre application Spotify Desktop :", uris);
         }
-        alert("🎉 " + matchedSpotifyIds.length + " URIs Spotify ont été copiées dans le presse-papiers !\\n\\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans passer par l'API.");
         return;
     }
     
@@ -2050,14 +2076,16 @@ function copyTransferScript() {
     
     if (!script) return;
     
-    navigator.clipboard.writeText(script).then(() => {
-        if (tracks.length === 0) {
-            alert('Le script de transfert générique a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur sur open.spotify.com pour importer vos musiques.');
+    window.robustCopyText(script).then((copied) => {
+        if (copied) {
+            if (tracks.length === 0) {
+                alert('Le script de transfert générique a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur sur open.spotify.com pour importer vos musiques.');
+            } else {
+                alert('Le script de transfert direct contenant vos ' + tracks.length + ' titres YTM a été copié !\n\nCollez-le directement dans la console de votre navigateur (F12 -> onglet Console) sur open.spotify.com pour démarrer le transfert automatique sans aucune autre manipulation !');
+            }
         } else {
-            alert('Le script de transfert direct contenant vos ' + tracks.length + ' titres YTM a été copié !\n\nCollez-le directement dans la console de votre navigateur (F12 -> onglet Console) sur open.spotify.com pour démarrer le transfert automatique sans aucune autre manipulation !');
+            prompt("Échec de la copie automatique.\nFaites Ctrl+C pour copier le script de transfert ci-dessous :", script);
         }
-    }).catch(err => {
-        alert('Échec de la copie automatique : ' + err.message);
     });
 }
 
@@ -2974,10 +3002,12 @@ function copyYtMatchedUris() {
     }
     
     const text = matchedUris.join('\n');
-    navigator.clipboard.writeText(text).then(() => {
-        alert(`🎉 ${matchedUris.length} URIs Spotify ont été copiées dans le presse-papiers !\n\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans aucune API !`);
-    }).catch(err => {
-        alert("Échec de la copie automatique : " + err.message);
+    window.robustCopyText(text).then((copied) => {
+        if (copied) {
+            alert(`🎉 ${matchedUris.length} URIs Spotify ont été copiées dans le presse-papiers !\n\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans aucune API !`);
+        } else {
+            prompt(`🎉 ${matchedUris.length} URIs Spotify trouvées !\nLa copie automatique a échoué.\n\nFaites Ctrl+C pour copier les URIs ci-dessous, puis Ctrl+V dans Spotify Desktop :`, text);
+        }
     });
 }
 
@@ -3209,22 +3239,93 @@ window.copySpotifyExtractionScript = function() {
     };
     
     const token = await captureToken();
+    
+    const robustConsoleCopy = async (val) => {
+        let ok = false;
+        try { copy(val); ok = true; } catch (e) {}
+        if (!ok) {
+            try { await navigator.clipboard.writeText(val); ok = true; } catch (e) {}
+        }
+        if (!ok) {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = val;
+                textarea.style.position = 'fixed';
+                textarea.style.top = '0';
+                textarea.style.left = '0';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                ok = true;
+            } catch (e) {}
+        }
+        return ok;
+    };
+
     if (token) {
-        copy(token);
-        console.log("✅ Jeton d'accès extrait avec succès :", token);
-        alert("🎉 Jeton d'accès copié dans votre presse-papiers !\\n\\nVous pouvez maintenant le coller dans l'application.");
+        console.log("========================================");
+        console.log("✅ JETON EXTRACTED SPOTIFY :");
+        console.log(token);
+        console.log("========================================");
+        
+        const copied = await robustConsoleCopy(token);
+        if (copied) {
+            alert("🎉 Jeton d'accès copié dans votre presse-papiers !\\n\\nSi le collage ne fonctionne pas, vous pouvez le copier manuellement depuis la console de développement (F12).");
+        } else {
+            prompt("🎉 Jeton d'accès extrait avec succès !\\nLa copie automatique a été bloquée par le navigateur.\\n\\nFaites Ctrl+C (ou Cmd+C) pour copier le jeton ci-dessous :", token);
+        }
     } else {
         const manual = prompt("Jeton d'accès automatique introuvable (Bloqué par Spotify).\\n\\nPour le récupérer manuellement :\\n1. Ouvrez l'onglet Réseau (Network) de la console (F12).\\n2. Cherchez ou lancez une action (ex: recherche, clic play) pour voir des requêtes vers 'api.spotify.com'.\\n3. Cliquez sur une requête, allez dans l'onglet 'Headers' et faites défiler jusqu'à 'Request Headers'.\\n4. Copiez la valeur de l'en-tête 'Authorization' en retirant le mot 'Bearer '.\\n\\nCollez votre jeton d'accès Spotify ci-dessous :");
         if (manual) {
-            copy(manual.trim());
-            alert("✅ Jeton copié dans le presse-papiers !");
+            const trimmed = manual.trim();
+            console.log("========================================");
+            console.log("✅ JETON MANUAL SPOTIFY :");
+            console.log(trimmed);
+            console.log("========================================");
+            
+            const copied = await robustConsoleCopy(trimmed);
+            if (copied) {
+                alert("✅ Jeton copié dans le presse-papiers !");
+            } else {
+                prompt("Jeton copié ! Faites Ctrl+C pour copier le jeton ci-dessous :", trimmed);
+            }
         }
     }
 })();`;
-    navigator.clipboard.writeText(script).then(() => {
-        alert('Le script d\'extraction rapide a été copié dans votre presse-papiers !');
-    }).catch(err => {
-        alert('Échec de la copie automatique. Veuillez copier le texte du script manuellement.');
+    window.robustCopyText(script).then((copied) => {
+        if (copied) {
+            alert('Le script d\'extraction rapide a été copié dans votre presse-papiers !');
+        } else {
+            prompt("Échec de la copie automatique.\nFaites Ctrl+C pour copier le script d'extraction ci-dessous :", script);
+        }
     });
+};
+
+window.robustCopyText = async function(text) {
+    let copied = false;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            copied = true;
+        }
+    } catch (e) {}
+    if (!copied) {
+        try {
+            const el = document.createElement('textarea');
+            el.value = text;
+            el.style.position = 'fixed';
+            el.style.top = '0';
+            el.style.left = '0';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            copied = true;
+        } catch (e) {}
+    }
+    return copied;
 };
 
