@@ -1535,7 +1535,7 @@ function copyScraperScript() {
 
 function getDirectTransferScript(tracks, playlistName) {
     const escapedTracksJson = JSON.stringify(tracks).replace(/`/g, '\\`').replace(/\${/g, '\\${');
-    const escapedPlaylistName = playlistName.replace(/`/g, '\\`').replace(/\${/g, '\\${').replace(/"/g, '\\"');
+    const escapedPlaylistName = playlistName.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${').replace(/"/g, '\\"');
     
     return `(async () => {
     console.log("🚀 Démarrage du transfert YouTube Music vers Spotify (Sans Premium)...");
