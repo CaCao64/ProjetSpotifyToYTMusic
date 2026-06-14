@@ -1,0 +1,924 @@
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const open = require('open');
+const { spawn } = require('child_process');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const CONFIG_DIR = path.join(__dirname, 'data');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const YT_AUTH_PATH = path.join(CONFIG_DIR, 'browser.json');
+
+// Ensure data directory exists
+if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Helper: Load configuration
+function loadConfig() {
+    if (fs.existsSync(CONFIG_PATH)) {
+        try {
+            return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        } catch (e) {
+            return {};
+        }
+    }
+    return {};
+}
+
+// Helper: Save configuration
+function saveConfig(config) {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
+}
+
+// Helper: Run python script for YT Music API
+function runPythonHelper(data) {
+    return new Promise((resolve, reject) => {
+        const py = spawn('python', [path.join(__dirname, 'ytmusic_helper.py')]);
+        let stdout = '';
+        let stderr = '';
+        
+        py.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+        });
+        
+        py.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+        });
+        
+        py.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(`Python process exited with code ${code}. Stderr: ${stderr}`));
+                return;
+            }
+            try {
+                const response = JSON.parse(stdout);
+                if (response.success === false) {
+                    reject(new Error(response.error || 'Unknown error in Python helper'));
+                } else {
+                    resolve(response);
+                }
+            } catch (err) {
+                reject(new Error(`Failed to parse Python response: ${err.message}. Raw output: ${stdout}`));
+            }
+        });
+        
+        py.stdin.write(JSON.stringify(data));
+        py.stdin.end();
+    });
+}
+
+// Helper: Get Spotify Access Token (with refresh if expired)
+async function getSpotifyToken() {
+    const config = loadConfig();
+    if (!config.spotifyClientId || !config.spotifyClientSecret) {
+        throw new Error('Spotify credentials not configured');
+    }
+    
+    const now = Date.now();
+    if (!config.spotifyAccessToken || (config.spotifyTokenExpires && now >= config.spotifyTokenExpires - 60000)) {
+        if (!config.spotifyRefreshToken) {
+            throw new Error('Spotify not authorized. Please log in.');
+        }
+        
+        // Refresh token
+        const authHeader = Buffer.from(`${config.spotifyClientId}:${config.spotifyClientSecret}`).toString('base64');
+        try {
+            const response = await axios.post('https://accounts.spotify.com/api/token', 
+                new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    refresh_token: config.spotifyRefreshToken
+                }), {
+                    headers: {
+                        'Authorization': `Basic ${authHeader}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                }
+            );
+            
+            config.spotifyAccessToken = response.data.access_token;
+            if (response.data.refresh_token) {
+                config.spotifyRefreshToken = response.data.refresh_token;
+            }
+            config.spotifyTokenExpires = Date.now() + (response.data.expires_in * 1000);
+            saveConfig(config);
+        } catch (error) {
+            throw new Error('Failed to refresh Spotify token: ' + (error.response?.data?.error_description || error.message));
+        }
+    }
+    
+    return config.spotifyAccessToken;
+}
+
+// Helper: Handle Spotify API errors gracefully
+function handleSpotifyError(error, res) {
+    const status = error.response?.status;
+    const errorData = error.response?.data?.error;
+    const msg = errorData?.message || error.message;
+    const isPremiumError = status === 403 || msg.includes('403') || msg.toLowerCase().includes('premium');
+    
+    res.status(200).json({
+        success: false,
+        error: isPremiumError ? 'Spotify Premium requis' : msg,
+        isPremiumError: !!isPremiumError
+    });
+}
+
+
+// API: Get App Status and Config
+app.get('/api/status', (req, res) => {
+    const config = loadConfig();
+    const spotifyConfigured = !!(config.spotifyClientId && config.spotifyClientSecret);
+    const spotifyAuthorized = !!config.spotifyRefreshToken;
+    const ytMusicConfigured = fs.existsSync(YT_AUTH_PATH);
+    
+    res.json({
+        spotifyConfigured,
+        spotifyAuthorized,
+        spotifyClientId: config.spotifyClientId || '',
+        ytMusicConfigured
+    });
+});
+
+// API: Save Credentials
+app.post('/api/config', async (req, res) => {
+    const { spotifyClientId, spotifyClientSecret, ytHeaders } = req.body;
+    const config = loadConfig();
+    
+    if (spotifyClientId) config.spotifyClientId = spotifyClientId.trim();
+    if (spotifyClientSecret) config.spotifyClientSecret = spotifyClientSecret.trim();
+    
+    saveConfig(config);
+    
+    try {
+        if (ytHeaders && ytHeaders.trim()) {
+            await runPythonHelper({
+                action: 'setup_auth',
+                headers_raw: ytHeaders,
+                filepath: YT_AUTH_PATH
+            });
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Spotify Login Redirect
+app.get('/api/spotify/login', (req, res) => {
+    const config = loadConfig();
+    if (!config.spotifyClientId) {
+        return res.status(400).send('Spotify Client ID not configured.');
+    }
+    
+    const redirectUri = `http://127.0.0.1:${PORT}/api/spotify/callback`;
+    const scopes = 'user-library-read user-library-modify playlist-read-private playlist-modify-public playlist-modify-private user-read-private';
+    const spotifyAuthUrl = `https://accounts.spotify.com/authorize?` + 
+        new URLSearchParams({
+            response_type: 'code',
+            client_id: config.spotifyClientId,
+            scope: scopes,
+            redirect_uri: redirectUri,
+            show_dialog: 'true'
+        }).toString();
+        
+    res.redirect(spotifyAuthUrl);
+});
+
+// API: Spotify Callback
+app.get('/api/spotify/callback', async (req, res) => {
+    const { code, error } = req.query;
+    if (error) {
+        return res.status(400).send(`Spotify Authorization Error: ${error}`);
+    }
+    
+    const config = loadConfig();
+    const redirectUri = `http://127.0.0.1:${PORT}/api/spotify/callback`;
+    const authHeader = Buffer.from(`${config.spotifyClientId}:${config.spotifyClientSecret}`).toString('base64');
+    
+    try {
+        const response = await axios.post('https://accounts.spotify.com/api/token', 
+            new URLSearchParams({
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: redirectUri
+            }), {
+                headers: {
+                    'Authorization': `Basic ${authHeader}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        
+        config.spotifyAccessToken = response.data.access_token;
+        config.spotifyRefreshToken = response.data.refresh_token;
+        config.spotifyTokenExpires = Date.now() + (response.data.expires_in * 1000);
+        saveConfig(config);
+        
+        // Redirect back to home dashboard
+        res.redirect('/');
+    } catch (e) {
+        res.status(500).send('Failed to exchange Spotify auth code: ' + (e.response?.data?.error_description || e.message));
+    }
+});
+
+// API: Fetch Liked Tracks from Spotify (with Pagination)
+app.get('/api/spotify/tracks', async (req, res) => {
+    try {
+        const token = await getSpotifyToken();
+        let tracks = [];
+        let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
+        
+        // In SSE or standard HTTP, let's fetch all.
+        // For standard HTTP: fetch in a loop.
+        while (url) {
+            const response = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const items = response.data.items.map(item => ({
+                id: item.track.id,
+                title: item.track.name,
+                artist: item.track.artists.map(a => a.name).join(', '),
+                album: item.track.album.name,
+                duration_ms: item.track.duration_ms,
+                thumbnail: item.track.album.images[0]?.url || item.track.album.images[1]?.url || '',
+                added_at: item.added_at
+            }));
+            
+            tracks = tracks.concat(items);
+            url = response.data.next;
+        }
+        
+        res.json({ success: true, count: tracks.length, tracks });
+    } catch (e) {
+        handleSpotifyError(e, res);
+    }
+});
+
+// Similarity helper functions
+function cleanString(str) {
+    if (!str) return '';
+    return str.toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // remove accents
+        // Remove features in parentheses or brackets (e.g. "(feat. Drake)")
+        .replace(/\((feat|featuring|with|ft)\.?\s+.*?\)/gi, '')
+        .replace(/\[(feat|featuring|with|ft)\.?\s+.*?\]/gi, '')
+        .replace(/\b(feat|featuring|with|ft)\.?\s+.*/gi, '')
+        // Remove common YouTube video tags in parentheses or brackets
+        .replace(/\((official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\)/gi, '')
+        .replace(/\[(official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\]/gi, '')
+        // Remove common suffixes like "- Official Video" or "- Lyrics"
+        .replace(/-\s+(official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)$/gi, '')
+        // Remove remaster / live / deluxe / version info in parentheses or brackets
+        .replace(/\((.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\)/gi, '')
+        .replace(/\[(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\]/gi, '')
+        .replace(/-\s+(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)$/gi, '')
+        .replace(/\s+remaster(ed)?(\s+\d+)?/gi, '')
+        // Remove non-alphanumeric characters except spaces
+        .replace(/[^\w\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function stringSimilarity(s1, s2) {
+    if (!s1 || !s2) return 0;
+    const words1 = new Set(s1.split(' '));
+    const words2 = new Set(s2.split(' '));
+    let intersection = 0;
+    for (const w of words1) {
+        if (words2.has(w)) intersection++;
+    }
+    const union = words1.size + words2.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+}
+
+function calculateMatchScore(spotifyTrack, ytCandidate) {
+    const cleanSpotifyTitle = cleanString(spotifyTrack.title);
+    const cleanYtTitle = cleanString(ytCandidate.title);
+    const titleScore = stringSimilarity(cleanSpotifyTitle, cleanYtTitle);
+    
+    const cleanSpotifyArtist = cleanString(spotifyTrack.artist);
+    const cleanYtArtist = cleanString(ytCandidate.artist);
+    const artistScore = stringSimilarity(cleanSpotifyArtist, cleanYtArtist);
+    
+    const spotifyDurationSec = spotifyTrack.duration_ms / 1000;
+    const ytDurationSec = ytCandidate.duration_seconds;
+    const durationDiff = Math.abs(spotifyDurationSec - ytDurationSec);
+    
+    let durationScore = 1;
+    if (durationDiff > 15) {
+        durationScore = Math.max(0, 1 - (durationDiff - 15) / 30); // decay score if difference is > 15 seconds
+    }
+    
+    // Weights: 45% title, 45% artist, 10% duration
+    return (titleScore * 0.45) + (artistScore * 0.45) + (durationScore * 0.1);
+}
+
+// API: Search track on YT Music and find best match
+app.post('/api/ytmusic/search-track', async (req, res) => {
+    const { track } = req.body; // spotify track object
+    if (!track) {
+        return res.status(400).json({ success: false, error: 'Track object required' });
+    }
+    
+    try {
+        // Construct query: "Title Artist"
+        const query = `${track.title} ${track.artist}`;
+        
+        // Retry logic for robust searches
+        const maxRetries = 3;
+        let attempt = 0;
+        let helperResponse = null;
+        let lastError = null;
+        
+        while (attempt < maxRetries) {
+            try {
+                helperResponse = await runPythonHelper({
+                    action: 'search_songs',
+                    auth_path: YT_AUTH_PATH,
+                    query: query
+                });
+                break; // success, exit retry loop
+            } catch (err) {
+                attempt++;
+                lastError = err;
+                console.warn(`[Recherche YTMusic] Tentative ${attempt}/${maxRetries} échouée pour "${track.title}": ${err.message}`);
+                if (attempt < maxRetries) {
+                    // Backoff exponential delay: 1s, 2s...
+                    await new Promise(r => setTimeout(r, attempt * 1000));
+                }
+            }
+        }
+        
+        if (!helperResponse) {
+            console.error(`[Recherche YTMusic] Échec définitif après ${maxRetries} tentatives pour "${track.title} - ${track.artist}":`, lastError);
+            return res.status(500).json({ success: false, error: lastError.message });
+        }
+        
+        const candidates = helperResponse.results || [];
+        
+        // Score each candidate
+        const scoredCandidates = candidates.map(c => {
+            const score = calculateMatchScore(track, c);
+            return { ...c, matchScore: score };
+        });
+        
+        // Sort by match score descending
+        scoredCandidates.sort((a, b) => b.matchScore - a.matchScore);
+        
+        const bestMatch = scoredCandidates[0] || null;
+        
+        res.json({
+            success: true,
+            bestMatch,
+            candidates: scoredCandidates
+        });
+    } catch (e) {
+        console.error(`[Recherche YTMusic] Erreur générale pour "${track.title} - ${track.artist}":`, e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Get Playlists
+app.get('/api/ytmusic/playlists', async (req, res) => {
+    try {
+        const response = await runPythonHelper({
+            action: 'get_playlists',
+            auth_path: YT_AUTH_PATH
+        });
+        res.json({ success: true, playlists: response.playlists });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Create Playlist
+app.post('/api/ytmusic/playlists', async (req, res) => {
+    const { title, description } = req.body;
+    try {
+        const response = await runPythonHelper({
+            action: 'create_playlist',
+            auth_path: YT_AUTH_PATH,
+            title,
+            description
+        });
+        res.json({ success: true, playlistId: response.playlist_id });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Get Playlist Tracks
+app.get('/api/ytmusic/playlists/:id/tracks', async (req, res) => {
+    const playlistId = req.params.id;
+    try {
+        const response = await runPythonHelper({
+            action: 'get_playlist_tracks',
+            auth_path: YT_AUTH_PATH,
+            playlist_id: playlistId
+        });
+        res.json({ success: true, tracks: response.tracks });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Transfer tracks with progress updates via Server-Sent Events (SSE)
+app.get('/api/ytmusic/transfer-stream', async (req, res) => {
+    const { playlistId, trackData, skipDuplicates } = req.query; // trackData is JSON string array of videoIds
+    
+    if (!playlistId || !trackData) {
+        return res.status(400).send('Missing playlistId or trackData parameters');
+    }
+    
+    let videoIds = [];
+    try {
+        videoIds = JSON.parse(trackData);
+    } catch (e) {
+        return res.status(400).send('Invalid trackData format (must be JSON array of strings)');
+    }
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    try {
+        sendEvent('info', { message: `Starting transfer of ${videoIds.length} tracks...` });
+        
+        // We will add the tracks in batches of 50.
+        // The user wanted "De plus récent en haut au plus vieux en bas".
+        // Spotify retrieved them from newest to oldest.
+        // If we append them in that order, the first item added (newest) remains at index 0,
+        // and subsequent items go below it.
+        // So the order is perfectly preserved.
+        const batchSize = 100; // Larger batch size to prevent API rate limit issues
+        const batches = [];
+        for (let i = 0; i < videoIds.length; i += batchSize) {
+            batches.push(videoIds.slice(i, i + batchSize));
+        }
+        
+        let processedTracks = 0;
+        // Process batches in reverse order (oldest tracks batch first, newest tracks batch last)
+        // This ensures that the newest tracks have the newest addition timestamps on YouTube Music,
+        // making the "Le plus récent en premier" sort order match the Spotify order perfectly.
+        for (let b = batches.length - 1; b >= 0; b--) {
+            const batch = batches[b];
+            const batchStartIndex = b * batchSize;
+            sendEvent('info', { message: `Adding batch ${b + 1} of ${batches.length} (tracks ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+            
+            // Retry logic for adding tracks to playlist (robust against temporary YTM issues)
+            const maxRetries = 3;
+            let attempt = 0;
+            let success = false;
+            let lastError = null;
+            let lastResult = null;
+            
+            const allowDuplicates = skipDuplicates === 'false';
+            while (attempt < maxRetries) {
+                try {
+                    lastResult = await runPythonHelper({
+                        action: 'add_tracks',
+                        auth_path: YT_AUTH_PATH,
+                        playlist_id: playlistId,
+                        video_ids: batch,
+                        duplicates: allowDuplicates
+                    });
+                    success = true;
+                    break;
+                } catch (err) {
+                    attempt++;
+                    lastError = err;
+                    sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée pour le lot ${b + 1} : ${err.message}. Nouvel essai dans ${attempt * 3}s...` });
+                    // Exponential-like backoff wait: 3s, 6s...
+                    await new Promise(r => setTimeout(r, attempt * 3000));
+                }
+            }
+            
+            if (!success) {
+                throw new Error(`Impossible d'ajouter le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+            }
+            
+            // Check for partial failures (Liked Music individual song failures)
+            let batchFailed = 0;
+            const batchStatus = lastResult && lastResult.status;
+            if (batchStatus && batchStatus.failed && batchStatus.failed > 0) {
+                batchFailed = batchStatus.failed;
+                sendEvent('info', { message: `⚠️ ${batchFailed} titre(s) du lot ${b + 1} n'ont pas pu être aimés après 3 tentatives.` });
+            }
+            
+            processedTracks += batch.length - batchFailed;
+            const progress = Math.min(100, Math.round((processedTracks / videoIds.length) * 100));
+            sendEvent('progress', { 
+                added: processedTracks,
+                total: videoIds.length,
+                percent: progress,
+                message: `Successfully transferred ${processedTracks} of ${videoIds.length} songs.`
+            });
+            
+            // Subtle sleep to prevent rapid rate limiting
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        
+        sendEvent('success', { message: 'Transfer completed successfully!' });
+    } catch (err) {
+        sendEvent('error', { error: err.message });
+    } finally {
+        res.end();
+    }
+});
+
+// API: Clear all Liked Tracks on YT Music with progress updates via Server-Sent Events (SSE)
+app.get('/api/ytmusic/clear-liked-stream', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    try {
+        let attempts = 0;
+        const maxAttempts = 3;
+        let done = false;
+        
+        while (!done && attempts < maxAttempts) {
+            attempts++;
+            if (attempts > 1) {
+                sendEvent('info', { message: `Vérification des titres restants (Passage ${attempts}/${maxAttempts})...` });
+            } else {
+                sendEvent('info', { message: 'Récupération de la liste des titres likés sur YouTube Music...' });
+            }
+            
+            const response = await runPythonHelper({
+                action: 'get_liked_tracks',
+                auth_path: YT_AUTH_PATH
+            });
+            
+            const tracks = response.tracks || [];
+            const videoIds = tracks.map(t => t.videoId).filter(Boolean);
+            
+            if (videoIds.length === 0) {
+                if (attempts === 1) {
+                    sendEvent('success', { message: 'Aucun titre liké trouvé sur votre compte YouTube Music.' });
+                } else {
+                    sendEvent('success', { message: 'Tous les titres likés ont été supprimés avec succès !' });
+                }
+                done = true;
+                break;
+            }
+            
+            sendEvent('info', { message: `Passage ${attempts} : Trouvé ${videoIds.length} titres likés. Début de la suppression...` });
+            
+            // Batch unlikes (batchSize 100 works well)
+            const batchSize = 100;
+            const batches = [];
+            for (let i = 0; i < videoIds.length; i += batchSize) {
+                batches.push(videoIds.slice(i, i + batchSize));
+            }
+            
+            let processedTracks = 0;
+            for (let b = 0; b < batches.length; b++) {
+                const batch = batches[b];
+                const batchStartIndex = b * batchSize;
+                sendEvent('info', { message: `Suppression du lot ${b + 1} sur ${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                
+                const maxRetries = 3;
+                let attempt = 0;
+                let success = false;
+                let lastError = null;
+                let lastResult = null;
+                
+                while (attempt < maxRetries) {
+                    try {
+                        lastResult = await runPythonHelper({
+                            action: 'unlike_tracks',
+                            auth_path: YT_AUTH_PATH,
+                            video_ids: batch
+                        });
+                        success = true;
+                        break;
+                    } catch (err) {
+                        attempt++;
+                        lastError = err;
+                        sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée pour le lot ${b + 1} de suppression : ${err.message}. Nouvel essai dans ${attempt * 3}s...` });
+                        await new Promise(r => setTimeout(r, attempt * 3000));
+                    }
+                }
+                
+                if (!success) {
+                    throw new Error(`Impossible de supprimer le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+                }
+                
+                let batchFailed = 0;
+                const batchStatus = lastResult && lastResult.status;
+                if (batchStatus && batchStatus.failed && batchStatus.failed > 0) {
+                    batchFailed = batchStatus.failed;
+                    sendEvent('info', { message: `⚠️ ${batchFailed} titre(s) du lot ${b + 1} n'ont pas pu être supprimés après 3 tentatives.` });
+                }
+                
+                processedTracks += batch.length - batchFailed;
+                const progress = Math.min(100, Math.round((processedTracks / videoIds.length) * 100));
+                sendEvent('progress', { 
+                    added: processedTracks,
+                    total: videoIds.length,
+                    percent: progress,
+                    message: `Passage ${attempts} : ${processedTracks} titres sur ${videoIds.length} traités.`
+                });
+                
+                // Subtle sleep to prevent rapid rate limiting
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            
+            // Wait 3 seconds before next check/pass to let YouTube servers catch up
+            if (attempts < maxAttempts) {
+                await new Promise(r => setTimeout(r, 3000));
+            }
+        }
+        
+        if (!done) {
+            sendEvent('success', { message: 'Le processus est terminé. Si certains titres restent encore aimés (dû aux limites de YouTube), vous pouvez relancer le nettoyage.' });
+        }
+    } catch (err) {
+        sendEvent('error', { error: err.message });
+    } finally {
+        res.end();
+    }
+});
+
+// API: Fetch Playlists from Spotify
+app.get('/api/spotify/playlists', async (req, res) => {
+    try {
+        const token = await getSpotifyToken();
+        let playlists = [];
+        let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
+        
+        while (url) {
+            const response = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const items = response.data.items.map(item => ({
+                id: item.id,
+                title: item.name
+            }));
+            
+            playlists = playlists.concat(items);
+            url = response.data.next;
+        }
+        
+        res.json({ success: true, playlists });
+    } catch (e) {
+        handleSpotifyError(e, res);
+    }
+});
+
+// API: Create Playlist on Spotify
+app.post('/api/spotify/playlists', async (req, res) => {
+    const { title, description } = req.body;
+    try {
+        const token = await getSpotifyToken();
+        
+        // 1. Get user profile to find user ID
+        const meResponse = await axios.get('https://api.spotify.com/v1/me', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const userId = meResponse.data.id;
+        
+        // 2. Create playlist
+        const createResponse = await axios.post(`https://api.spotify.com/v1/users/${userId}/playlists`, {
+            name: title,
+            description: description || 'Transfert depuis YouTube Music',
+            public: false
+        }, {
+            headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        res.json({ success: true, playlistId: createResponse.data.id });
+    } catch (e) {
+        handleSpotifyError(e, res);
+    }
+});
+
+// API: Get Tracks of a Spotify Playlist (or Liked Songs)
+app.get('/api/spotify/playlists/:id/tracks', async (req, res) => {
+    const playlistId = req.params.id;
+    try {
+        const token = await getSpotifyToken();
+        let tracks = [];
+        let url = playlistId === 'LM' 
+            ? 'https://api.spotify.com/v1/me/tracks?limit=50'
+            : `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+            
+        while (url) {
+            const response = await axios.get(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const items = response.data.items.map(item => {
+                if (!item.track) return null;
+                return {
+                    videoId: item.track.id, // Spotify ID mapped to videoId for consistency
+                    title: item.track.name,
+                    artist: item.track.artists.map(a => a.name).join(', '),
+                    album: item.track.album?.name || '',
+                    duration_seconds: Math.round(item.track.duration_ms / 1000)
+                };
+            }).filter(Boolean);
+            
+            tracks = tracks.concat(items);
+            url = response.data.next;
+        }
+        
+        res.json({ success: true, tracks });
+    } catch (e) {
+        handleSpotifyError(e, res);
+    }
+});
+
+// API: Search track on Spotify and find best match
+app.post('/api/spotify/search-track', async (req, res) => {
+    const { track } = req.body; // YTM track object
+    if (!track) {
+        return res.status(400).json({ success: false, error: 'Track object required' });
+    }
+    
+    try {
+        const token = await getSpotifyToken();
+        const query = `${track.title} ${track.artist}`;
+        
+        const response = await axios.get('https://api.spotify.com/v1/search', {
+            params: {
+                q: query,
+                type: 'track',
+                limit: 10
+            },
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        const spotifyTracks = response.data.tracks?.items || [];
+        const candidates = spotifyTracks.map(t => {
+            const artists = t.artists.map(a => a.name).join(', ');
+            const thumbnail = t.album.images[0]?.url || t.album.images[1]?.url || '';
+            return {
+                videoId: t.id, // Spotify ID
+                title: t.name,
+                artist: artists,
+                album: t.album.name,
+                duration_seconds: Math.round(t.duration_ms / 1000),
+                thumbnail
+            };
+        });
+        
+        // Score each candidate
+        const scoredCandidates = candidates.map(c => {
+            const score = calculateMatchScore(track, c);
+            return { ...c, matchScore: score };
+        });
+        
+        // Sort by match score descending
+        scoredCandidates.sort((a, b) => b.matchScore - a.matchScore);
+        
+        const bestMatch = scoredCandidates[0] || null;
+        
+        res.json({
+            success: true,
+            bestMatch,
+            candidates: scoredCandidates
+        });
+    } catch (e) {
+        handleSpotifyError(e, res);
+    }
+});
+
+// API: Transfer tracks to Spotify with progress updates via Server-Sent Events (SSE)
+app.get('/api/spotify/transfer-stream', async (req, res) => {
+    const { playlistId, trackData, skipDuplicates } = req.query; // trackData is JSON string array of Spotify IDs
+    
+    if (!playlistId || !trackData) {
+        return res.status(400).send('Missing playlistId or trackData parameters');
+    }
+    
+    let spotifyTrackIds = [];
+    try {
+        spotifyTrackIds = JSON.parse(trackData);
+    } catch (e) {
+        return res.status(400).send('Invalid trackData format (must be JSON array of strings)');
+    }
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    try {
+        const token = await getSpotifyToken();
+        sendEvent('info', { message: `Lancement du transfert de ${spotifyTrackIds.length} titres vers Spotify...` });
+        
+        // Spotify has batch limits:
+        // - Adding to a Playlist: max 100 tracks per request.
+        // - Adding to Liked Songs (user library): max 50 tracks per request.
+        const batchSize = playlistId === 'LM' ? 50 : 100;
+        const batches = [];
+        for (let i = 0; i < spotifyTrackIds.length; i += batchSize) {
+            batches.push(spotifyTrackIds.slice(i, i + batchSize));
+        }
+        
+        let processedTracks = 0;
+        // Process batches in reverse order (oldest tracks batch first, newest tracks batch last)
+        // to preserve chronological order on Spotify!
+        for (let b = batches.length - 1; b >= 0; b--) {
+            const batch = batches[b];
+            const batchStartIndex = b * batchSize;
+            sendEvent('info', { message: `Ajout du lot ${b + 1} sur ${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+            
+            const maxRetries = 3;
+            let attempt = 0;
+            let success = false;
+            let lastError = null;
+            
+            while (attempt < maxRetries) {
+                try {
+                    if (playlistId === 'LM') {
+                        // Save tracks for current user (Liked Songs)
+                        await axios.put('https://api.spotify.com/v1/me/tracks', {
+                            ids: batch
+                        }, {
+                            headers: { 
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                    } else {
+                        // Add items to playlist
+                        const uris = batch.map(id => `spotify:track:${id}`);
+                        await axios.post(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                            uris: uris
+                        }, {
+                            headers: { 
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                    }
+                    success = true;
+                    break;
+                } catch (err) {
+                    attempt++;
+                    lastError = err;
+                    const errorMsg = err.response?.data?.error?.message || err.message;
+                    sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée : ${errorMsg}. Nouvel essai dans ${attempt * 3}s...` });
+                    await new Promise(r => setTimeout(r, attempt * 3000));
+                }
+            }
+            
+            if (!success) {
+                throw new Error(`Impossible de transférer le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+            }
+            
+            processedTracks += batch.length;
+            const progress = Math.min(100, Math.round((processedTracks / spotifyTrackIds.length) * 100));
+            sendEvent('progress', { 
+                added: processedTracks,
+                total: spotifyTrackIds.length,
+                percent: progress,
+                message: `${processedTracks} titres sur ${spotifyTrackIds.length} ont été transférés sur Spotify.`
+            });
+            
+            // Subtle sleep
+            await new Promise(r => setTimeout(r, 1500));
+        }
+        
+        sendEvent('success', { message: 'Transfert vers Spotify terminé avec succès !' });
+    } catch (err) {
+        sendEvent('error', { error: err.message });
+    } finally {
+        res.end();
+    }
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Server running on http://127.0.0.1:${PORT}`);
+    // Open application in default web browser
+    open(`http://127.0.0.1:${PORT}`).catch(err => {
+        console.log(`Failed to auto-open browser: ${err.message}`);
+    });
+});

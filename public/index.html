@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotify to YT Music Transfer</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Application Header -->
+        <header>
+            <div class="brand">
+                <div>
+                    <h1>Spotify ➔ YouTube Music</h1>
+                    <div class="brand-subtitle">Transférez vos titres likés proprement, en audio uniquement, dans l'ordre chronologique.</div>
+                </div>
+            </div>
+            <div class="app-status">
+                <div id="spotify-status" class="status-badge">
+                    <span class="dot"></span> Spotify Configuré
+                </div>
+                <div id="yt-status" class="status-badge">
+                    <span class="dot"></span> YouTube Music Configuré
+                </div>
+            </div>
+        </header>
+
+        <!-- Setup Grid -->
+        <div class="grid-2" id="setup-section">
+            <!-- Spotify Setup Card -->
+            <div class="card">
+                <h2>🟢 Configurer Spotify</h2>
+                <div class="form-group">
+                    <label for="spotify-client-id">Client ID Spotify</label>
+                    <input type="text" id="spotify-client-id" placeholder="Entrez le Client ID Spotify">
+                </div>
+                <div class="form-group">
+                    <label for="spotify-client-secret">Client Secret Spotify</label>
+                    <input type="password" id="spotify-client-secret" placeholder="Entrez le Client Secret Spotify">
+                </div>
+                
+                <details>
+                    <summary>ℹ️ Comment obtenir ces identifiants ?</summary>
+                    <div class="details-content">
+                        <ol>
+                            <li>Rendez-vous sur le <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: var(--spotify-green)">Developer Dashboard Spotify</a> et connectez-vous.</li>
+                            <li>Cliquez sur <strong>Create App</strong>.</li>
+                            <li>Nommez votre application (ex: "SpotifyToYTMusic").</li>
+                            <li>Ajoutez l'URL de redirection suivante dans le champ <strong>Redirect URIs</strong> : <br><code>http://127.0.0.1:3000/api/spotify/callback</code></li>
+                            <li>Cochez les conditions et enregistrez.</li>
+                            <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong> (depuis les paramètres de l'app Spotify) et collez-les ici.</li>
+                        </ol>
+                    </div>
+                </details>
+                
+                <div class="flex-buttons" style="margin-bottom: 1.5rem;">
+                    <button class="btn btn-secondary" id="btn-save-spotify">Sauvegarder</button>
+                    <button class="btn btn-spotify" id="btn-auth-spotify" disabled>Se connecter à Spotify</button>
+                </div>
+
+                <!-- Section Alternative Sans Premium -->
+                <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+                    <h3 style="font-family: var(--font-display); font-size: 1.05rem; margin-bottom: 0.5rem; color: var(--spotify-green);">⚡ Option alternative : Sans Premium</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                        Si vous n'avez pas d'abonnement Premium, vous pouvez charger vos titres gratuitement en exportant la liste depuis le Web Player de Spotify.
+                    </p>
+                    <details style="margin-bottom: 0.75rem;">
+                        <summary style="padding: 0.4rem 0.8rem; font-size: 0.75rem; font-weight: 600;">Instructions d'extraction</summary>
+                        <div class="details-content" style="font-size: 0.75rem; padding: 0 1rem 1rem 1.5rem; line-height: 1.5;">
+                            <ol>
+                                <li>Ouvrez <a href="https://open.spotify.com/collection/tracks" target="_blank" style="color: var(--spotify-green); text-decoration: underline;">Spotify Web Player - Titres likés</a> et connectez-vous.</li>
+                                <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> puis onglet <strong>Console</strong>).</li>
+                                <li>Copiez le script ci-dessous à l'aide du bouton, collez-le dans la console et appuyez sur <strong>Entrée</strong>.</li>
+                                <li>Laissez la page défiler. Un fichier <code>spotify_liked_songs.json</code> va se télécharger automatiquement à la fin.</li>
+                            </ol>
+                        </div>
+                    </details>
+                    
+                    <textarea id="scraper-script-area" readonly style="display: none;">(async () => {
+    console.log("Extraction universelle en cours, veuillez laisser cet onglet Spotify actif et visible sur votre écran...");
+    const tracks = new Map();
+    let lastTrackCount = 0;
+    let noChange = 0;
+    
+    // Détection dynamique du conteneur de défilement
+    const firstRow = document.querySelector('[data-testid="tracklist-row"]');
+    let scrollContainer = null;
+    if (firstRow) {
+        let parent = firstRow.parentElement;
+        while (parent && parent !== document.body) {
+            const style = window.getComputedStyle(parent);
+            const overflow = style.getPropertyValue('overflow') + style.getPropertyValue('overflow-y');
+            if (parent.scrollHeight > parent.clientHeight && (overflow.includes('auto') || overflow.includes('scroll') || overflow.includes('hidden'))) {
+                scrollContainer = parent;
+                break;
+            }
+            parent = parent.parentElement;
+        }
+    }
+    
+    while (noChange < 50) { // S'arrête si le nombre de musiques n'augmente plus après 50 essais (environ 30s)
+        const rows = document.querySelectorAll('[data-testid="tracklist-row"]');
+        
+        // Étape 1 : Récupération des positions brutes des lignes
+        const rawPositions = Array.from(rows).map(row => {
+            let pos = parseInt(row.getAttribute('aria-rowindex'));
+            if (isNaN(pos)) {
+                const cells = row.querySelectorAll('[role="gridcell"]');
+                const firstCellText = cells[0]?.innerText || "";
+                pos = parseInt(firstCellText);
+                // Si l'index vient du texte de la cellule (commence à 1), on ajoute 1 pour correspondre à aria-rowindex (commence à 2)
+                if (!isNaN(pos)) {
+                    pos = pos + 1;
+                }
+            }
+            return pos;
+        });
+
+        // Étape 2 : Interpolation/Propagation pour combler les valeurs NaN (ex: lignes survolées avec icône Play)
+        // Pass de droite à gauche
+        for (let i = rawPositions.length - 2; i >= 0; i--) {
+            if (isNaN(rawPositions[i]) && !isNaN(rawPositions[i + 1])) {
+                rawPositions[i] = rawPositions[i + 1] - 1;
+            }
+        }
+        // Pass de gauche à droite
+        for (let i = 1; i < rawPositions.length; i++) {
+            if (isNaN(rawPositions[i]) && !isNaN(rawPositions[i - 1])) {
+                rawPositions[i] = rawPositions[i - 1] + 1;
+            }
+        }
+
+        // Étape 3 : Fallback si tout est NaN (par exemple en tout début de chargement)
+        const firstValidPos = rawPositions.find(p => !isNaN(p));
+        if (isNaN(firstValidPos)) {
+            const basePosition = tracks.size + 2;
+            for (let i = 0; i < rawPositions.length; i++) {
+                rawPositions[i] = basePosition + i;
+            }
+        }
+        
+        rows.forEach((row, index) => {
+            try {
+                const cells = row.querySelectorAll('[role="gridcell"]');
+                if (cells.length < 2) return;
+                
+                // Dans la structure Spotify, la 2e colonne (index 1) contient le Titre et l'Artiste
+                const titleCell = cells[1];
+                const textElements = Array.from(titleCell.querySelectorAll('[dir="auto"]'));
+                if (textElements.length === 0) return;
+                
+                // Le premier texte 'dir=auto' est le Titre, le deuxième est l'Artiste (même pour les fichiers locaux)
+                const title = textElements[0].innerText;
+                const artists = textElements[1] ? textElements[1].innerText : "Unknown Artist";
+                
+                // La 3e colonne (index 2) contient l'album
+                let album = "";
+                if (cells.length >= 4) {
+                    const albumCell = cells[2];
+                    album = albumCell.innerText || "";
+                }
+                
+                const position = rawPositions[index];
+                
+                // Récupération de la durée (dans la dernière colonne de la ligne)
+                let duration = "3:00";
+                const lastCell = cells[cells.length - 1];
+                if (lastCell) {
+                    const durationEl = Array.from(lastCell.querySelectorAll('span, div')).find(el => /^\d+:\d{2}$/.test(el.innerText));
+                    if (durationEl) duration = durationEl.innerText;
+                }
+                const [m, s] = duration.split(':').map(Number);
+                const duration_ms = (m * 60 + s) * 1000;
+
+                // Si c'est un morceau catalogue, on récupère son ID Spotify, sinon on en génère un propre unique pour le fichier local
+                const trackLink = titleCell.querySelector('a[href*="/track/"]');
+                const id = trackLink ? 
+                           trackLink.href.split('/track/')[1]?.split('?')[0] : 
+                           "local-" + (title + "-" + artists + "-" + duration_ms).replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
+                           
+                if (tracks.has(id)) return;
+                
+                const img = titleCell.querySelector('img');
+                const thumbnail = img ? img.src : "";
+                
+                tracks.set(id, {
+                    id,
+                    title,
+                    artist: artists,
+                    album,
+                    duration_ms,
+                    thumbnail,
+                    position
+                });
+            } catch (e) {
+                console.warn("Ligne ignorée suite à une erreur :", e);
+            }
+        });
+        
+        // Défilement combiné progressif
+        if (rows.length > 0) {
+            const lastRow = rows[rows.length - 1];
+            lastRow.scrollIntoView({ block: 'center' });
+        }
+        if (scrollContainer) {
+            // Défilement manuel progressif pour forcer le chargement de la liste virtuelle sans sauter de morceaux
+            scrollContainer.scrollTop += 350;
+        }
+        
+        // Attente du chargement
+        await new Promise(r => setTimeout(r, 600));
+        
+        // Suivi de la progression
+        if (tracks.size > lastTrackCount) {
+            noChange = 0;
+            lastTrackCount = tracks.size;
+            console.log(`${tracks.size} chansons trouvées pour le moment...`);
+        } else {
+            noChange++;
+        }
+    }
+    
+    // Convertir en tableau et trier par position pour garantir l'ordre chronologique exact de Spotify
+    const list = Array.from(tracks.values());
+    list.sort((a, b) => a.position - b.position);
+    
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "spotify_liked_songs.json";
+    a.click();
+    alert(list.length + " chansons exportées avec succès !");
+})();</textarea>
+
+                    <div class="flex-buttons" style="gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <button class="btn btn-secondary" id="btn-copy-script" style="font-size: 0.8rem; padding: 0.5rem 1rem;">📋 Copier le script</button>
+                        <button class="btn btn-spotify" id="btn-trigger-file" style="font-size: 0.8rem; padding: 0.5rem 1rem; color: #000;">📂 Importer le fichier JSON</button>
+                    </div>
+                    <input type="file" id="import-json-file" accept=".json" style="display: none;">
+                </div>
+            </div>
+
+            <!-- YT Music Setup Card -->
+            <div class="card">
+                <h2>🔴 Configurer YouTube Music</h2>
+                <div class="form-group">
+                    <label for="yt-headers">En-têtes de Requête Navigateur (Headers)</label>
+                    <textarea id="yt-headers" placeholder="Collez ici les en-têtes (Request Headers) copiés depuis music.youtube.com..."></textarea>
+                </div>
+
+                <details>
+                    <summary>ℹ️ Comment récupérer ces en-têtes ?</summary>
+                    <div class="details-content">
+                        <ol>
+                            <li>Ouvrez une fenêtre de navigation privée.</li>
+                            <li>Allez sur <a href="https://music.youtube.com" target="_blank" style="color: var(--youtube-red)">music.youtube.com</a> et connectez-vous à votre compte.</li>
+                            <li>Appuyez sur <code>F12</code> pour ouvrir les outils développeur, puis allez dans l'onglet <strong>Réseau (Network)</strong>.</li>
+                            <li>Filtrez les requêtes en tapant <code>browse</code> dans le filtre réseau.</li>
+                            <li>Rafraîchissez la page (<code>F5</code>). Cliquez sur une des requêtes <code>browse</code> qui a réussi (statut 200).</li>
+                            <li>Dans l'onglet <strong>En-têtes (Headers)</strong>, faites défiler jusqu'à <strong>En-têtes de la requête (Request Headers)</strong>.</li>
+                            <li>Sélectionnez et copiez tout le texte à partir de <code>accept: */*</code> jusqu'à la fin de la section des en-têtes, puis collez-le ici.</li>
+                        </ol>
+                    </div>
+                </details>
+
+                <button class="btn btn-yt" id="btn-save-yt">Sauvegarder l'authentification</button>
+
+                <!-- Section Outils YouTube Music -->
+                <div id="yt-tools-section" style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+                    <h3 style="font-family: var(--font-display); font-size: 1.05rem; margin-bottom: 0.5rem; color: var(--youtube-red);">🗑️ Nettoyage de la bibliothèque</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                        Vous pouvez supprimer tous les titres de la playlist "Titres likés" (Liked Music) sur YouTube Music. Cette action est irréversible.
+                    </p>
+                    <button class="btn btn-secondary" id="btn-clear-liked" style="background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.25); color: var(--danger); font-size: 0.8rem; padding: 0.6rem 1.2rem;">Supprimer les titres likés</button>
+                </div>
+
+                <!-- Section Alternative Sans Premium : YTM -> Spotify -->
+                <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+                    <h3 style="font-family: var(--font-display); font-size: 1.05rem; margin-bottom: 0.5rem; color: var(--youtube-red);">⚡ Option alternative : Sans Premium</h3>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                        Si vous n'avez pas d'abonnement Premium pour Spotify, vous pouvez transférer vos titres gratuitement en exécutant notre script sur le Web Player de Spotify.
+                    </p>
+                    <details style="margin-bottom: 0.75rem;">
+                        <summary style="padding: 0.4rem 0.8rem; font-size: 0.75rem; font-weight: 600;">Instructions de transfert</summary>
+                        <div class="details-content" style="font-size: 0.75rem; padding: 0 1rem 1rem 1.5rem; line-height: 1.5;">
+                            <ol>
+                                <li>Chargez vos titres YTM dans l'onglet <strong>🔴 YouTube Music ➔ 🟢 Spotify</strong>.</li>
+                                <li>Cliquez sur <strong>Exporter résultats</strong> dans l'entête du tableau pour télécharger le fichier JSON.</li>
+                                <li>Ouvrez <a href="https://open.spotify.com" target="_blank" style="color: var(--youtube-red); text-decoration: underline;">Spotify Web Player</a> et connectez-vous.</li>
+                                <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> puis onglet <strong>Console</strong>).</li>
+                                <li>Copiez le script ci-dessous à l'aide du bouton, collez-le dans la console et appuyez sur <strong>Entrée</strong>.</li>
+                                <li>Sélectionnez le fichier JSON téléchargé et laissez le script s'exécuter.</li>
+                            </ol>
+                        </div>
+                    </details>
+                    
+                    <textarea id="transfer-script-area" readonly style="display: none;">(async () => {
+    console.log("Démarrage de l'importateur YTM vers Spotify (Sans Premium)...");
+    
+    let token;
+    const captureToken = async () => {
+        // 1. Try to extract from #session script element
+        try {
+            const sessionEl = document.getElementById('session') || document.querySelector('#session');
+            if (sessionEl) {
+                const sessionData = JSON.parse(sessionEl.textContent || sessionEl.innerText);
+                if (sessionData.accessToken) {
+                    console.log("Jeton d'accès extrait de la balise #session.");
+                    return sessionData.accessToken;
+                }
+            }
+        } catch (e) {}
+        
+        // 2. Scan all script tags on the page for "accessToken"
+        try {
+            for (const script of document.querySelectorAll('script')) {
+                const content = script.textContent || script.innerText || '';
+                if (content.includes('accessToken')) {
+                    const match = content.match(/"accessToken"\s*:\s*"([^"]+)"/);
+                    if (match && match[1]) {
+                        console.log("Jeton d'accès extrait des scripts de la page.");
+                        return match[1];
+                    }
+                }
+            }
+        } catch (e) {}
+        
+        // 3. Intercept background/user fetch and XMLHttpRequest calls to spotify.com
+        return new Promise((resolve) => {
+            console.log("En attente de détection automatique du jeton d'accès (patientez 2-3 secondes)...");
+            const originalFetch = window.fetch;
+            const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+            let resolved = false;
+            
+            const cleanup = () => {
+                window.fetch = originalFetch;
+                XMLHttpRequest.prototype.setRequestHeader = originalSetRequestHeader;
+            };
+            
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    cleanup();
+                    resolve(null);
+                }
+            }, 8000); // 8s timeout
+            
+            // Hook XMLHttpRequest to intercept Authorization headers in background AJAX calls
+            XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+                try {
+                    if (header && header.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
+                        const t = value.substring(7).trim();
+                        if (t && !resolved) {
+                            resolved = true;
+                            clearTimeout(timeoutId);
+                            cleanup();
+                            console.log("Jeton d'accès détecté et intercepté via XMLHttpRequest !");
+                            resolve(t);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Erreur d'interception XHR :", err);
+                }
+                return originalSetRequestHeader.apply(this, arguments);
+            };
+            
+            // Hook window.fetch
+            window.fetch = function(url, options) {
+                try {
+                    let urlStr = '';
+                    if (typeof url === 'string') {
+                        urlStr = url;
+                    } else if (url && typeof url === 'object' && url.url) {
+                        urlStr = url.url;
+                    }
+                    
+                    if (urlStr.includes('spotify.com')) {
+                        let auth = null;
+                        if (options && options.headers) {
+                            if (options.headers instanceof Headers) {
+                                auth = options.headers.get('Authorization');
+                            } else if (typeof options.headers === 'object') {
+                                auth = options.headers['Authorization'] || options.headers['authorization'];
+                            }
+                        }
+                        if (!auth && url && typeof url === 'object' && url.headers) {
+                            if (url.headers instanceof Headers) {
+                                auth = url.headers.get('Authorization');
+                            } else if (typeof url.headers === 'object') {
+                                auth = url.headers['Authorization'] || url.headers['authorization'];
+                            }
+                        }
+                        
+                        if (auth && auth.startsWith('Bearer ')) {
+                            const t = auth.substring(7).trim();
+                            if (t && !resolved) {
+                                resolved = true;
+                                clearTimeout(timeoutId);
+                                cleanup();
+                                console.log("Jeton d'accès détecté et intercepté via Fetch !");
+                                resolve(t);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Erreur d'interception Fetch :", err);
+                }
+                return originalFetch.apply(this, arguments);
+            };
+        });
+    };
+    
+    token = await captureToken();
+    
+    // 4. Ultimate manual fallback prompt if all else fails
+    if (!token) {
+        console.log("Impossible de récupérer automatiquement le jeton d'accès.");
+        token = prompt("Jeton d'accès automatique introuvable (Bloqué par Spotify).\n\nPour le récupérer manuellement :\n1. Ouvrez l'onglet Réseau (Network) de la console (F12).\n2. Cherchez ou lancez une action (ex: recherche, clic play) pour voir des requêtes vers 'api.spotify.com'.\n3. Cliquez sur une requête (ex: 'search' ou 'me'), allez dans l'onglet 'Headers' et faites défiler jusqu'à 'Request Headers'.\n4. Copiez la valeur de l'en-tête 'Authorization' en retirant le mot 'Bearer ' (ex: BQB...).\n\nCollez votre jeton d'accès Spotify ci-dessous :");
+        
+        if (!token) {
+            alert("Importation annulée.");
+            return;
+        }
+        token = token.trim();
+    }
+    
+    console.log("Jeton d'accès Spotify configuré avec succès !");
+    
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json';
+    fileInput.style.display = 'none';
+    document.body.appendChild(fileInput);
+    
+    fileInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                const importedData = JSON.parse(evt.target.result);
+                if (!Array.isArray(importedData)) {
+                    throw new Error("Le format du fichier n'est pas un tableau.");
+                }
+                
+                // Helper function to fetch with automatic 429 rate limit retries and exponential backoff
+                const fetchWithRetry = async (url, options = {}, retries = 5) => {
+                    let delay = 2000;
+                    for (let attempt = 0; attempt < retries; attempt++) {
+                        try {
+                            const res = await fetch(url, options);
+                            if (res.status === 429) {
+                                const retryAfterHeader = res.headers.get('Retry-After') || res.headers.get('retry-after');
+                                const waitTime = retryAfterHeader ? (parseInt(retryAfterHeader) + 1) * 1000 : delay;
+                                console.warn(`   ⚠️ [Status 429] Limite de requêtes Spotify atteinte. Pause de ${Math.round(waitTime/1000)} secondes...`);
+                                await new Promise(r => setTimeout(r, waitTime));
+                                delay *= 2;
+                                continue;
+                            }
+                            return res;
+                        } catch (err) {
+                            if (attempt === retries - 1) throw err;
+                            console.warn(`   ⚠️ Erreur réseau, tentative de reconnexion dans ${delay/1000}s :`, err);
+                            await new Promise(r => setTimeout(r, delay));
+                            delay *= 2;
+                        }
+                    }
+                    return fetch(url, options);
+                };
+                
+                // Determine format
+                let totalTracks = importedData.length;
+                console.log(`Chargé ${totalTracks} éléments depuis le fichier JSON.`);
+                
+                const destType = prompt("Où voulez-vous importer ces titres ?\n1 - Titres Likés (Liked Songs)\n2 - Une nouvelle playlist");
+                if (destType !== '1' && destType !== '2') {
+                    alert("Importation annulée.");
+                    return;
+                }
+                
+                let playlistId = 'LM';
+                if (destType === '2') {
+                    const playlistName = prompt("Entrez le nom de la nouvelle playlist Spotify :", "YTM Import");
+                    if (!playlistName) {
+                        alert("Importation annulée.");
+                        return;
+                    }
+                    
+                    console.log(`Création de la playlist "${playlistName}"...`);
+                    const createRes = await fetchWithRetry(`https://api.spotify.com/v1/me/playlists`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            name: playlistName,
+                            description: 'Transféré depuis YouTube Music',
+                            public: false
+                        })
+                    });
+                    
+                    if (!createRes.ok) {
+                        const errText = await createRes.text();
+                        throw new Error(`Impossible de créer la playlist : ${createRes.status} ${errText}`);
+                    }
+                    
+                    const createData = await createRes.json();
+                    playlistId = createData.id;
+                    console.log(`Playlist créée avec succès ! ID: ${playlistId}`);
+                }
+                
+                console.log("Début de la recherche et de l'importation...");
+                const matchedSpotifyIds = [];
+                let successCount = 0;
+                
+                const cleanString = (str) => {
+                    if (!str) return '';
+                    return str.toLowerCase()
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "")
+                        .replace(/\((feat|featuring|with|ft)\.?\s+.*?\)/gi, '')
+                        .replace(/\[(feat|featuring|with|ft)\.?\s+.*?\]/gi, '')
+                        .replace(/\b(feat|featuring|with|ft)\.?\s+.*/gi, '')
+                        .replace(/\((official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\)/gi, '')
+                        .replace(/\[(official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\]/gi, '')
+                        .replace(/-\s+(official video|official audio|music video|lyrics?\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)$/gi, '')
+                        .replace(/\((.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\)/gi, '')
+                        .replace(/\[(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\]/gi, '')
+                        .replace(/-\s+(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)$/gi, '')
+                        .replace(/\s+remaster(ed)?(\s+\d+)?/gi, '')
+                        .replace(/[^\w\s]/g, '')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                };
+                
+                const stringSimilarity = (s1, s2) => {
+                    if (!s1 || !s2) return 0;
+                    const words1 = new Set(s1.split(' '));
+                    const words2 = new Set(s2.split(' '));
+                    let intersection = 0;
+                    for (const w of words1) {
+                        if (words2.has(w)) intersection++;
+                    }
+                    const union = words1.size + words2.size - intersection;
+                    return union === 0 ? 0 : intersection / union;
+                };
+                
+                const calculateMatchScore = (ytTrack, spotifyCandidate) => {
+                    const cleanYtTitle = cleanString(ytTrack.title);
+                    const cleanSpotifyTitle = cleanString(spotifyCandidate.name);
+                    const titleScore = stringSimilarity(cleanYtTitle, cleanSpotifyTitle);
+                    
+                    const cleanYtArtist = cleanString(ytTrack.artist);
+                    const cleanSpotifyArtist = cleanString(spotifyCandidate.artists.map(a => a.name).join(', '));
+                    const artistScore = stringSimilarity(cleanYtArtist, cleanSpotifyArtist);
+                    
+                    const ytDuration = ytTrack.duration_seconds || 0;
+                    const spotifyDuration = spotifyCandidate.duration_ms / 1000;
+                    const durationDiff = Math.abs(ytDuration - spotifyDuration);
+                    
+                    let durationScore = 1;
+                    if (durationDiff > 15) {
+                        durationScore = Math.max(0, 1 - (durationDiff - 15) / 30);
+                    }
+                    
+                    return (titleScore * 0.45) + (artistScore * 0.45) + (durationScore * 0.1);
+                };
+                
+                for (let i = 0; i < totalTracks; i++) {
+                    const item = importedData[i];
+                    const t = (item && item.ytmusic) ? item.ytmusic : item;
+                    if (!t) continue;
+                    
+                    // 1. Check if we already have a matched Spotify ID from the app
+                    const prematchedId = (item && item.spotify && item.spotify.id && !item.spotify.error) ? item.spotify.id : null;
+                    if (prematchedId) {
+                        matchedSpotifyIds.push(prematchedId);
+                        console.log(`[${i+1}/${totalTracks}] Utilisation du match existant : "${t.title} - ${t.artist}" ➔ ID Spotify: ${prematchedId}`);
+                        successCount++;
+                        continue;
+                    }
+                    
+                    // 2. Otherwise search on Spotify
+                    console.log(`[${i+1}/${totalTracks}] Recherche de "${t.title} - ${t.artist}"...`);
+                    try {
+                        const query = encodeURIComponent(`${t.title} ${t.artist}`);
+                        const searchRes = await fetchWithRetry(`https://api.spotify.com/v1/search?q=${query}&type=track&limit=5`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        const searchData = await searchRes.json();
+                        const candidates = searchData.tracks?.items || [];
+                        
+                        if (candidates.length > 0) {
+                            const scoredCandidates = candidates.map(c => ({
+                                candidate: c,
+                                score: calculateMatchScore(t, c)
+                            }));
+                            scoredCandidates.sort((a, b) => b.score - a.score);
+                            
+                            const best = scoredCandidates[0];
+                            if (best.score >= 0.45) {
+                                matchedSpotifyIds.push(best.candidate.id);
+                                console.log(`   Match trouvé : "${best.candidate.name}" par ${best.candidate.artists.map(a=>a.name).join(', ')} (${Math.round(best.score*100)}% match)`);
+                                successCount++;
+                            } else {
+                                console.warn(`   ⚠️ Score trop faible (${Math.round(best.score*100)}%) pour "${best.candidate.name}"`);
+                            }
+                        } else {
+                            console.warn("   ❌ Aucun candidat trouvé sur Spotify.");
+                        }
+                    } catch (err) {
+                        console.error(`   ❌ Erreur de recherche pour "${t.title}" :`, err);
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                
+                if (matchedSpotifyIds.length === 0) {
+                    alert("Aucun titre n'a pu être matché sur Spotify.");
+                    return;
+                }
+                
+                console.log(`Recherche terminée. ${matchedSpotifyIds.length} correspondances prêtes à être ajoutées.`);
+                
+                const batchSize = playlistId === 'LM' ? 50 : 100;
+                const batches = [];
+                for (let i = 0; i < matchedSpotifyIds.length; i += batchSize) {
+                    batches.push(matchedSpotifyIds.slice(i, i + batchSize));
+                }
+                
+                let addedCount = 0;
+                for (let b = 0; b < batches.length; b++) {
+                    const batch = batches[b];
+                    console.log(`Ajout du lot ${b+1}/${batches.length} (${batch.length} titres)...`);
+                    
+                    try {
+                        if (playlistId === 'LM') {
+                            const addRes = await fetchWithRetry('https://api.spotify.com/v1/me/tracks', {
+                                method: 'PUT',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ ids: batch })
+                            });
+                            if (!addRes.ok) {
+                                const errText = await addRes.text();
+                                throw new Error(`Status: ${addRes.status} ${errText}`);
+                            }
+                        } else {
+                            const uris = batch.map(id => `spotify:track:${id}`);
+                            const addRes = await fetchWithRetry(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ uris: uris })
+                            });
+                            if (!addRes.ok) {
+                                const errText = await addRes.text();
+                                throw new Error(`Status: ${addRes.status} ${errText}`);
+                            }
+                        }
+                        addedCount += batch.length;
+                        console.log(`   Lot ${b+1} ajouté avec succès.`);
+                    } catch (err) {
+                        console.error(`   ❌ Erreur lors de l'ajout du lot ${b+1} :`, err);
+                    }
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                
+                alert(`Importation terminée ! ${addedCount} titres sur ${totalTracks} ont été ajoutés avec succès à votre compte Spotify.`);
+            } catch (err) {
+                alert("Erreur de lecture du fichier JSON : " + err.message);
+            }
+        };
+        reader.readAsText(file);
+    };
+    
+    // Create and show overlay to get user activation for file input (bypasses browser sandbox blocks)
+    const showFileInputOverlay = (input) => {
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100vw';
+        overlay.style.height = '100vh';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
+        overlay.style.zIndex = '99999';
+        overlay.style.display = 'flex';
+        overlay.style.flexDirection = 'column';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
+        overlay.style.fontFamily = 'Helvetica, Arial, sans-serif';
+        overlay.style.color = '#fff';
+        
+        const title = document.createElement('h2');
+        title.textContent = "Jeton d'accès connecté !";
+        title.style.marginBottom = '10px';
+        title.style.fontSize = '24px';
+        title.style.color = '#1db954';
+        
+        const desc = document.createElement('p');
+        desc.textContent = "Veuillez cliquer sur le bouton ci-dessous pour choisir votre fichier JSON exporté.";
+        desc.style.marginBottom = '25px';
+        desc.style.fontSize = '14px';
+        desc.style.color = '#b3b3b3';
+        
+        const btn = document.createElement('button');
+        btn.textContent = "📁 Sélectionner le fichier JSON";
+        btn.style.padding = '14px 28px';
+        btn.style.fontSize = '16px';
+        btn.style.fontWeight = 'bold';
+        btn.style.backgroundColor = '#1db954';
+        btn.style.color = '#000';
+        btn.style.border = 'none';
+        btn.style.borderRadius = '50px';
+        btn.style.cursor = 'pointer';
+        btn.style.boxShadow = '0 8px 15px rgba(29, 185, 84, 0.3)';
+        btn.style.transition = 'transform 0.2s, background-color 0.2s';
+        
+        btn.onmouseover = () => { btn.style.backgroundColor = '#1ed760'; btn.style.transform = 'scale(1.04)'; };
+        btn.onmouseout = () => { btn.style.backgroundColor = '#1db954'; btn.style.transform = 'scale(1)'; };
+        
+        btn.onclick = () => {
+            input.click();
+            setTimeout(() => { overlay.remove(); }, 1000);
+        };
+        
+        overlay.appendChild(title);
+        overlay.appendChild(desc);
+        overlay.appendChild(btn);
+        document.body.appendChild(overlay);
+    };
+    
+    showFileInputOverlay(fileInput);
+})();</textarea>
+                    
+                    <div class="flex-buttons" style="gap: 0.5rem; margin-bottom: 0.75rem;">
+                        <button class="btn btn-secondary" id="btn-copy-transfer-script" style="font-size: 0.8rem; padding: 0.5rem 1rem;">📋 Copier le script</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transfer Dashboard (Initially hidden or active when configured) -->
+        <div id="transfer-dashboard" style="display: none;">
+            <!-- Tab Buttons -->
+            <div class="tabs" style="margin-bottom: 2rem; display: flex; gap: 0.75rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;">
+                <button class="btn btn-secondary active" id="btn-tab-spotify-to-yt" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🟢 Spotify ➔ 🔴 YouTube Music</button>
+                <button class="btn btn-secondary" id="btn-tab-yt-to-spotify" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem;">🔴 YouTube Music ➔ 🟢 Spotify</button>
+            </div>
+
+            <!-- Panel 1: Spotify -> YouTube Music -->
+            <div id="panel-spotify-to-yt" class="tab-panel active">
+                <!-- Warning Banner if Spotify API fails (No Premium) -->
+                <div class="premium-warning-banner" id="spotify-premium-warning-banner" style="display: none;">
+                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis)</h4>
+                    <p>
+                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte). 
+                        Le chargement en direct via l'API Spotify ne fonctionnera pas.
+                        <strong>Vous pouvez toujours extraire vos titres gratuitement en utilisant l'option Sans Premium :</strong>
+                    </p>
+                    <div class="instruction-box">
+                        <ol>
+                            <li>Ouvrez <a href="https://open.spotify.com/collection/tracks" target="_blank">Spotify Web Player - Titres Likés</a> et connectez-vous.</li>
+                            <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> ou <code>Ctrl+Maj+I</code>, puis onglet <strong>Console</strong>).</li>
+                            <li>Cliquez sur le bouton ci-dessous pour copier le script d'extraction, collez-le dans la console et appuyer sur <strong>Entrée</strong>.</li>
+                            <li>Laissez la page défiler. Un fichier <code>spotify_liked_songs.json</code> va se télécharger automatiquement à la fin.</li>
+                            <li>Cliquez sur le bouton <strong>📂 Importer résultats</strong> (au-dessus du tableau ci-dessous) pour charger ce fichier JSON, puis continuez normalement le transfert vers YouTube Music !</li>
+                        </ol>
+                    </div>
+                    <button class="btn btn-secondary" id="btn-copy-scraper-script-warning" style="margin-top: 1rem; font-size: 0.8rem; padding: 0.5rem 1.25rem; width: auto; text-transform: none; letter-spacing: normal;">
+                        📋 Copier le script d'extraction
+                    </button>
+                </div>
+
+                <!-- Matching Progress Card -->
+                <div class="progress-card" id="matching-progress-card" style="display: none; margin-bottom: 1.5rem;">
+                    <div class="progress-header">
+                        <span class="progress-title" id="matching-progress-title">Recherche des correspondances...</span>
+                        <span id="matching-progress-counter">0 / 0</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="matching-progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-estimation" id="matching-progress-estimation" style="font-size: 0.8rem; color: var(--text-secondary); text-align: right; margin-top: 0.25rem; font-weight: 500;">
+                        Calcul de l'estimation...
+                    </div>
+                </div>
+
+                <!-- Progress Log Card -->
+                <div class="progress-card" id="transfer-progress-card" style="display: none; margin-bottom: 1.5rem;">
+                    <div class="progress-header">
+                        <span class="progress-title" id="transfer-progress-title">Transfert en cours...</span>
+                        <span id="transfer-progress-counter">0 / 0</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="transfer-progress-bar-fill"></div>
+                    </div>
+                    <div class="console-log" id="transfer-console-log"></div>
+                </div>
+
+                <!-- Action controls -->
+                <div class="dashboard-actions">
+                    <div class="action-controls" style="display: flex; gap: 0.75rem; align-items: center; width: 100%; flex-wrap: wrap;">
+                        <button class="btn btn-spotify" id="btn-load-spotify-songs" style="max-width: 220px; text-transform: none; border-radius: 0.5rem; font-size: 0.8rem; padding: 0.6rem 1rem;">1. Charger les titres Spotify</button>
+                        <select id="playlist-select" style="max-width: 230px; font-size: 0.85rem; padding: 0.55rem 0.95rem;">
+                            <option value="">Chargement des playlists YTM...</option>
+                        </select>
+                        <input type="text" id="new-playlist-name" placeholder="Nom de la nouvelle playlist..." style="display: none; max-width: 220px; font-size: 0.85rem; padding: 0.55rem 0.95rem;">
+                        <button class="btn btn-secondary" id="btn-start-matching" style="max-width: 180px; text-transform: none; border-radius: 0.5rem; font-size: 0.8rem; padding: 0.6rem 1rem;" disabled>2. Matcher</button>
+                    </div>
+                    
+                    <div class="transfer-settings" style="margin-top: 1rem; display: flex; gap: 1.5rem; align-items: center; width: 100%;">
+                        <div class="switch-group">
+                            <input type="checkbox" id="setting-audio-only" checked disabled>
+                            <label for="setting-audio-only">🎵 Audio uniquement</label>
+                        </div>
+                        <div class="switch-group">
+                            <input type="checkbox" id="setting-skip-duplicates" checked>
+                            <label for="setting-skip-duplicates">🔄 Éviter les doublons</label>
+                        </div>
+                        <div class="switch-group">
+                            <input type="checkbox" id="setting-reverse-order">
+                            <label for="setting-reverse-order">⇅ Inverser l'ordre</label>
+                        </div>
+                        <button class="btn btn-yt" id="btn-execute-transfer" style="max-width: 180px; text-transform: none; border-radius: 0.5rem; font-size: 0.85rem; padding: 0.6rem 1.2rem; margin-left: auto;" disabled>3. Transférer</button>
+                    </div>
+                </div>
+
+                <!-- Stats Bar -->
+                <div class="summary-bar" id="summary-bar" style="display: none;">
+                    <div class="stat-box">
+                        <div class="stat-label">Titres Spotify</div>
+                        <div class="stat-value" id="stat-spotify-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Sélectionnés</div>
+                        <div class="stat-value" id="stat-selected-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Titres Matchés</div>
+                        <div class="stat-value success" id="stat-matched-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Confiance Moyenne</div>
+                        <div class="stat-value warning" id="stat-avg-confidence">0%</div>
+                    </div>
+                </div>
+
+                <!-- Tracks Table -->
+                <div class="track-table-container">
+                    <div class="table-header-controls">
+                        <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 1.1rem;">Titres Likés de Spotify</h3>
+                        <div style="display: flex; gap: 0.75rem; align-items: center; width: 100%; max-width: 650px; justify-content: flex-end;">
+                            <button class="btn btn-secondary" id="btn-import-results" style="max-width: 170px; padding: 0.5rem 1rem; font-size: 0.8rem; height: auto; text-transform: none; letter-spacing: normal;">📂 Importer résultats</button>
+                            <button class="btn btn-secondary" id="btn-export-json" style="max-width: 170px; padding: 0.5rem 1rem; font-size: 0.8rem; height: auto; text-transform: none; letter-spacing: normal;">📥 Exporter résultats</button>
+                            <div class="search-box" style="max-width: 220px;">
+                                <input type="text" id="table-search" placeholder="Rechercher un titre ou artiste...">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filters Bar -->
+                    <div class="table-filters" style="display: flex; gap: 1.5rem; align-items: center; padding: 0.85rem 1.5rem; background: rgba(15, 23, 42, 0.3); border-bottom: 1px solid var(--border-color); flex-wrap: wrap;">
+                        <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Filtrer par score :</span>
+                            <input type="number" id="filter-score-min" min="0" max="100" value="0" style="width: 75px; padding: 0.35rem 0.5rem; font-size: 0.8rem; height: auto; display: inline-block;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">% à</span>
+                            <input type="number" id="filter-score-max" min="0" max="100" value="100" style="width: 75px; padding: 0.35rem 0.5rem; font-size: 0.8rem; height: auto; display: inline-block;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">%</span>
+                        </div>
+                        
+                        <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="filter-only-red" style="accent-color: var(--danger); width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                            <label for="filter-only-red" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+                                🔴 Correspondances faibles / absentes uniquement (&lt; 50%)
+                            </label>
+                        </div>
+
+                        <button class="btn btn-secondary" id="btn-reset-filters" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; width: auto; height: auto; margin-left: auto;">Réinitialiser</button>
+                    </div>
+                    
+                    <div class="table-wrapper">
+                        <table id="tracks-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-cb"><input type="checkbox" id="select-all-tracks" checked></th>
+                                    <th class="col-spotify">Titre Spotify</th>
+                                    <th class="col-match">Match YouTube Music</th>
+                                    <th class="col-action">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tracks-table-body">
+                                <tr>
+                                    <td colspan="4" class="table-loading-overlay">
+                                        <p>Chargez vos titres Spotify pour commencer.</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel 2: YouTube Music -> Spotify -->
+            <div id="panel-yt-to-spotify" class="tab-panel" style="display: none;">
+                <!-- Warning Banner if Spotify API fails (No Premium) -->
+                <div class="premium-warning-banner" id="yt-premium-warning-banner" style="display: none;">
+                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis)</h4>
+                    <p>
+                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte). 
+                        Le transfert direct via l'API Spotify ne fonctionnera pas.
+                        <strong>Vous pouvez toujours transférer vos titres gratuitement en utilisant l'option Sans Premium :</strong>
+                    </p>
+                    <div class="instruction-box">
+                        <ol>
+                            <li>Chargez vos titres YouTube Music ci-dessous à l'aide du bouton <strong>1. Charger les titres YTM</strong>.</li>
+                            <li>Cliquez sur le bouton <strong>📥 Exporter résultats</strong> au-dessus du tableau pour télécharger le fichier JSON.</li>
+                            <li>Ouvrez <a href="https://open.spotify.com" target="_blank" style="color: var(--youtube-red);">Spotify Web Player</a> et connectez-vous.</li>
+                            <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> ou <code>Ctrl+Maj+I</code>, puis onglet <strong>Console</strong>).</li>
+                            <li>Cliquez sur le bouton ci-dessous pour copier notre script de transfert, collez-le dans la console et appuyez sur <strong>Entrée</strong>.</li>
+                            <li>Sélectionnez le fichier JSON exporté et laissez le script s'exécuter gratuitement !</li>
+                        </ol>
+                    </div>
+                    <button class="btn btn-secondary" id="btn-copy-transfer-script-warning" style="margin-top: 1rem; font-size: 0.8rem; padding: 0.5rem 1.25rem; width: auto; text-transform: none; letter-spacing: normal;">
+                        📋 Copier le script de transfert
+                    </button>
+                </div>
+
+                <!-- YTM -> Spotify Matching Progress Card -->
+                <div class="progress-card" id="yt-matching-progress-card" style="display: none; margin-bottom: 1.5rem;">
+                    <div class="progress-header">
+                        <span class="progress-title" id="yt-matching-progress-title">Recherche des correspondances...</span>
+                        <span id="yt-matching-progress-counter">0 / 0</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="yt-matching-progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-estimation" id="yt-matching-progress-estimation" style="font-size: 0.8rem; color: var(--text-secondary); text-align: right; margin-top: 0.25rem; font-weight: 500;">
+                        Calcul de l'estimation...
+                    </div>
+                </div>
+
+                <!-- YTM -> Spotify Progress Log Card -->
+                <div class="progress-card" id="yt-transfer-progress-card" style="display: none; margin-bottom: 1.5rem;">
+                    <div class="progress-header">
+                        <span class="progress-title" id="yt-transfer-progress-title">Transfert en cours...</span>
+                        <span id="yt-transfer-progress-counter">0 / 0</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="yt-transfer-progress-bar-fill"></div>
+                    </div>
+                    <div class="console-log" id="yt-transfer-console-log"></div>
+                </div>
+
+                <!-- YTM -> Spotify Action controls -->
+                <div class="dashboard-actions">
+                    <div class="action-controls" style="display: flex; gap: 0.75rem; align-items: center; width: 100%; flex-wrap: wrap;">
+                        <button class="btn btn-yt" id="btn-load-yt-songs" style="max-width: 220px; text-transform: none; border-radius: 0.5rem; font-size: 0.8rem; padding: 0.6rem 1rem;">1. Charger les titres YTM</button>
+                        <select id="yt-source-playlist-select" style="max-width: 230px; font-size: 0.85rem; padding: 0.55rem 0.95rem;">
+                            <option value="LM">Titres Likés (Liked Music)</option>
+                        </select>
+                        <select id="spotify-dest-playlist-select" style="max-width: 230px; font-size: 0.85rem; padding: 0.55rem 0.95rem;">
+                            <option value="">Chargement des playlists Spotify...</option>
+                        </select>
+                        <input type="text" id="yt-new-spotify-playlist-name" placeholder="Nom de la nouvelle playlist..." style="display: none; max-width: 220px; font-size: 0.85rem; padding: 0.55rem 0.95rem;">
+                        <button class="btn btn-secondary" id="btn-yt-start-matching" style="max-width: 180px; text-transform: none; border-radius: 0.5rem; font-size: 0.8rem; padding: 0.6rem 1rem;" disabled>2. Matcher</button>
+                    </div>
+                    
+                    <div class="transfer-settings" style="margin-top: 1rem; display: flex; gap: 1.5rem; align-items: center; width: 100%;">
+                        <div class="switch-group">
+                            <input type="checkbox" id="yt-setting-skip-duplicates" checked>
+                            <label for="yt-setting-skip-duplicates">🔄 Éviter les doublons</label>
+                        </div>
+                        <div class="switch-group">
+                            <input type="checkbox" id="yt-setting-reverse-order">
+                            <label for="yt-setting-reverse-order">⇅ Inverser l'ordre</label>
+                        </div>
+                        <button class="btn btn-spotify" id="btn-yt-execute-transfer" style="max-width: 180px; text-transform: none; border-radius: 0.5rem; font-size: 0.85rem; padding: 0.6rem 1.2rem; margin-left: auto;" disabled>3. Transférer</button>
+                    </div>
+                </div>
+
+                <!-- YTM -> Spotify Stats Bar -->
+                <div class="summary-bar" id="yt-summary-bar" style="display: none;">
+                    <div class="stat-box">
+                        <div class="stat-label">Titres YTM</div>
+                        <div class="stat-value" id="stat-yt-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Sélectionnés</div>
+                        <div class="stat-value" id="stat-yt-selected-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Titres Matchés</div>
+                        <div class="stat-value success" id="stat-yt-matched-count">0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Confiance Moyenne</div>
+                        <div class="stat-value warning" id="stat-yt-avg-confidence">0%</div>
+                    </div>
+                </div>
+
+                <!-- YTM -> Spotify Tracks Table -->
+                <div class="track-table-container">
+                    <div class="table-header-controls">
+                        <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 1.1rem;">Titres de YouTube Music</h3>
+                        <div style="display: flex; gap: 0.75rem; align-items: center; width: 100%; max-width: 650px; justify-content: flex-end;">
+                            <button class="btn btn-secondary" id="btn-yt-import-results" style="max-width: 170px; padding: 0.5rem 1rem; font-size: 0.8rem; height: auto; text-transform: none; letter-spacing: normal;">📂 Importer résultats</button>
+                            <button class="btn btn-secondary" id="btn-yt-export-json" style="max-width: 170px; padding: 0.5rem 1rem; font-size: 0.8rem; height: auto; text-transform: none; letter-spacing: normal;">📥 Exporter résultats</button>
+                            <div class="search-box" style="max-width: 220px;">
+                                <input type="text" id="yt-table-search" placeholder="Rechercher un titre ou artiste...">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filters Bar -->
+                    <div class="table-filters" style="display: flex; gap: 1.5rem; align-items: center; padding: 0.85rem 1.5rem; background: rgba(15, 23, 42, 0.3); border-bottom: 1px solid var(--border-color); flex-wrap: wrap;">
+                        <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Filtrer par score :</span>
+                            <input type="number" id="yt-filter-score-min" min="0" max="100" value="0" style="width: 75px; padding: 0.35rem 0.5rem; font-size: 0.8rem; height: auto; display: inline-block;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">% à</span>
+                            <input type="number" id="yt-filter-score-max" min="0" max="100" value="100" style="width: 75px; padding: 0.35rem 0.5rem; font-size: 0.8rem; height: auto; display: inline-block;">
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);">%</span>
+                        </div>
+                        
+                        <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="yt-filter-only-red" style="accent-color: var(--danger); width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                            <label for="yt-filter-only-red" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
+                                🔴 Correspondances faibles / absentes uniquement (&lt; 50%)
+                            </label>
+                        </div>
+
+                        <button class="btn btn-secondary" id="yt-btn-reset-filters" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; width: auto; height: auto; margin-left: auto;">Réinitialiser</button>
+                    </div>
+                    
+                    <div class="table-wrapper">
+                        <table id="yt-tracks-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-cb"><input type="checkbox" id="yt-select-all-tracks" checked></th>
+                                    <th class="col-spotify">Titre YouTube Music</th>
+                                    <th class="col-match">Match Spotify</th>
+                                    <th class="col-action">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="yt-tracks-table-body">
+                                <tr>
+                                    <td colspan="4" class="table-loading-overlay">
+                                        <p>Chargez vos titres YouTube Music pour commencer.</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <!-- Manual Search Override Modal -->
+    <div class="modal" id="override-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Corriger la correspondance</h3>
+                <button class="modal-close" id="btn-close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-spotify-reference" id="modal-spotify-info">
+                    <!-- Spotify track ref -->
+                </div>
+                <div class="modal-search-form">
+                    <input type="text" id="modal-search-input" placeholder="Rechercher sur YouTube Music...">
+                    <button class="btn btn-secondary" id="btn-modal-search" style="max-width: 100px;">Chercher</button>
+                </div>
+                
+                <div style="font-weight: 600; font-size: 0.8rem; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 0.5rem; letter-spacing: 0.05em;">Résultats (Audio uniquement)</div>
+                <div class="candidate-list" id="modal-candidates-list">
+                    <!-- Candidate items will go here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-modal" style="max-width: 100px;">Annuler</button>
+                <button class="btn btn-spotify" id="btn-confirm-modal" style="max-width: 150px;" disabled>Confirmer</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="index.js?v=2"></script>
+</body>
+</html>
