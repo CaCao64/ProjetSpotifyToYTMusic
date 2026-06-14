@@ -129,6 +129,10 @@ function setupEventListeners() {
     if (btnCopyTransferWarning) {
         btnCopyTransferWarning.addEventListener('click', copyTransferScript);
     }
+    const btnYtCopyScriptDirect = document.getElementById('btn-yt-copy-script-direct');
+    if (btnYtCopyScriptDirect) {
+        btnYtCopyScriptDirect.addEventListener('click', copyTransferScript);
+    }
     
     // Dashboard actions (Spotify ➔ YTM)
     el.playlistSelect.addEventListener('change', handlePlaylistSelectChange);
@@ -1855,6 +1859,28 @@ function switchTab(tab) {
 }
 
 // Load Spotify playlists for the destination dropdown
+function toggleYtSpotifyBlockedState(blocked) {
+    const select = document.getElementById('spotify-dest-playlist-select');
+    const btnMatch = document.getElementById('btn-yt-start-matching');
+    const btnCopyDirect = document.getElementById('btn-yt-copy-script-direct');
+    const transferSettings = document.querySelector('.transfer-settings');
+    const warningBanner = document.getElementById('yt-premium-warning-banner');
+    
+    if (blocked) {
+        if (select) select.style.display = 'none';
+        if (btnMatch) btnMatch.style.display = 'none';
+        if (btnCopyDirect) btnCopyDirect.style.display = 'inline-block';
+        if (transferSettings) transferSettings.style.display = 'none';
+        if (warningBanner) warningBanner.style.display = 'block';
+    } else {
+        if (select) select.style.display = 'inline-block';
+        if (btnMatch) btnMatch.style.display = 'inline-block';
+        if (btnCopyDirect) btnCopyDirect.style.display = 'none';
+        if (transferSettings) transferSettings.style.display = 'flex';
+        if (warningBanner) warningBanner.style.display = 'none';
+    }
+}
+
 async function loadSpotifyPlaylists() {
     const select = document.getElementById('spotify-dest-playlist-select');
     const warningBanner = document.getElementById('yt-premium-warning-banner');
@@ -1865,7 +1891,7 @@ async function loadSpotifyPlaylists() {
         const data = await res.json();
         
         if (data.success) {
-            if (warningBanner) warningBanner.style.display = 'none';
+            toggleYtSpotifyBlockedState(false);
             ytState.playlists = data.playlists;
             
             let html = '<option value="LM">🟢 Titres Likés (Liked Songs)</option>';
@@ -1877,6 +1903,7 @@ async function loadSpotifyPlaylists() {
             select.innerHTML = html;
             handleSpotifyDestPlaylistSelectChange();
         } else {
+            toggleYtSpotifyBlockedState(true);
             const isExpired = data.isExpiredToken;
             select.innerHTML = isExpired 
                 ? '<option value="">⚠️ Jeton expiré (à renouveler)</option>'
@@ -1886,12 +1913,11 @@ async function loadSpotifyPlaylists() {
                 if (isExpired && p) {
                     p.innerHTML = "Votre jeton d'accès temporaire a expiré. Veuillez suivre les instructions pour en récupérer un nouveau.";
                 }
-                warningBanner.style.display = 'block';
             }
         }
     } catch (e) {
+        toggleYtSpotifyBlockedState(true);
         select.innerHTML = '<option value="">⚠️ Erreur de connexion API</option>';
-        if (warningBanner) warningBanner.style.display = 'block';
     }
 }
 
@@ -1942,6 +1968,8 @@ async function loadYtSongs() {
             updateStatsYt();
             
             document.getElementById('btn-yt-start-matching').removeAttribute('disabled');
+            const copyBtn = document.getElementById('btn-yt-copy-script-direct');
+            if (copyBtn) copyBtn.removeAttribute('disabled');
         } else {
             alert('Erreur: ' + data.error);
         }
@@ -2740,6 +2768,8 @@ function handleYtFileImport(e) {
             validateReadyToTransferYt();
             
             document.getElementById('btn-yt-start-matching').removeAttribute('disabled');
+            const copyBtn = document.getElementById('btn-yt-copy-script-direct');
+            if (copyBtn) copyBtn.removeAttribute('disabled');
             alert(`${tracks.length} titres chargés avec succès !`);
         } catch (err) {
             alert("Erreur lors de la lecture du fichier : " + err.message);
