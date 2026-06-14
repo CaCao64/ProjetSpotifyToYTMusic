@@ -1779,7 +1779,7 @@ function getDirectTransferScript(tracks, playlistName) {
     }
     
     alert("🎉 Transfert terminé avec succès !\\n\\n" + addedCount + " titres sur " + totalTracks + " ont été ajoutés à votre compte Spotify.");
-})();\`;
+})();`;
 }
 
 function copyTransferScript() {
