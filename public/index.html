@@ -31,32 +31,68 @@
             <!-- Spotify Setup Card -->
             <div class="card">
                 <h2>🟢 Configurer Spotify</h2>
-                <div class="form-group">
-                    <label for="spotify-client-id">Client ID Spotify</label>
-                    <input type="text" id="spotify-client-id" placeholder="Entrez le Client ID Spotify">
-                </div>
-                <div class="form-group">
-                    <label for="spotify-client-secret">Client Secret Spotify</label>
-                    <input type="password" id="spotify-client-secret" placeholder="Entrez le Client Secret Spotify">
-                </div>
                 
-                <details>
-                    <summary>ℹ️ Comment obtenir ces identifiants ?</summary>
-                    <div class="details-content">
-                        <ol>
-                            <li>Rendez-vous sur le <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: var(--spotify-green)">Developer Dashboard Spotify</a> et connectez-vous.</li>
-                            <li>Cliquez sur <strong>Create App</strong>.</li>
-                            <li>Nommez votre application (ex: "SpotifyToYTMusic").</li>
-                            <li>Ajoutez l'URL de redirection suivante dans le champ <strong>Redirect URIs</strong> : <br><code>http://127.0.0.1:3000/api/spotify/callback</code></li>
-                            <li>Cochez les conditions et enregistrez.</li>
-                            <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong> (depuis les paramètres de l'app Spotify) et collez-les ici.</li>
-                        </ol>
+                <!-- Inner tab selection -->
+                <div class="setup-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); padding: 0.25rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <button id="btn-setup-tab-web" class="btn active" style="flex: 1; padding: 0.45rem; font-size: 0.75rem; border-radius: 0.35rem; text-transform: none; font-weight: 600; border: none; box-shadow: none;">🔑 Jeton Web Player (Recommandé)</button>
+                    <button id="btn-setup-tab-oauth" class="btn" style="flex: 1; padding: 0.45rem; font-size: 0.75rem; border-radius: 0.35rem; text-transform: none; font-weight: 600; border: none; box-shadow: none; background: transparent; color: var(--text-secondary);">🌐 Client Developer OAuth</button>
+                </div>
+
+                <!-- Web Player Token Config -->
+                <div id="setup-panel-web">
+                    <div class="form-group">
+                        <label for="spotify-web-token">Jeton d'accès (Web Player Access Token)</label>
+                        <input type="password" id="spotify-web-token" placeholder="Collez le jeton BQB... extrait de Spotify Web Player">
                     </div>
-                </details>
-                
-                <div class="flex-buttons" style="margin-bottom: 1.5rem;">
-                    <button class="btn btn-secondary" id="btn-save-spotify">Sauvegarder</button>
-                    <button class="btn btn-spotify" id="btn-auth-spotify" disabled>Se connecter à Spotify</button>
+                    
+                    <details style="margin-bottom: 1rem;">
+                        <summary style="font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--spotify-green);">ℹ️ Comment obtenir ce jeton en 2 secondes ?</summary>
+                        <div class="details-content" style="font-size: 0.75rem; line-height: 1.4; padding: 0.5rem 0.5rem 0;">
+                            <ol style="margin-left: 1.2rem;">
+                                <li>Ouvrez <a href="https://open.spotify.com" target="_blank" style="color: var(--spotify-green); text-decoration: underline;">Spotify Web Player</a> et connectez-vous.</li>
+                                <li>Ouvrez la console du navigateur (Touche <code>F12</code>, puis onglet <strong>Console</strong>).</li>
+                                <li>Copiez-collez la ligne suivante dans la console et appuyez sur <strong>Entrée</strong> :<br>
+                                    <code style="background: rgba(0,0,0,0.4); padding: 0.2rem 0.4rem; border-radius: 3px; display: block; margin: 0.3rem 0; word-break: break-all; color: #a5f3fc; cursor: pointer;" onclick="navigator.clipboard.writeText('copy(JSON.parse(document.getElementById(\'session\').textContent).accessToken)') || alert('Code copié !')">copy(JSON.parse(document.getElementById('session').textContent).accessToken)</code>
+                                </li>
+                                <li>Le jeton est automatiquement copié dans votre presse-papiers ! Collez-le simplement ci-dessus.</li>
+                            </ol>
+                        </div>
+                    </details>
+                    
+                    <div class="flex-buttons" style="margin-bottom: 1rem;">
+                        <button class="btn btn-spotify" id="btn-save-web-token" style="color: #000;">Sauvegarder le jeton</button>
+                    </div>
+                </div>
+
+                <!-- OAuth Developer Credentials Config -->
+                <div id="setup-panel-oauth" style="display: none;">
+                    <div class="form-group">
+                        <label for="spotify-client-id">Client ID Spotify</label>
+                        <input type="text" id="spotify-client-id" placeholder="Entrez le Client ID Spotify">
+                    </div>
+                    <div class="form-group">
+                        <label for="spotify-client-secret">Client Secret Spotify</label>
+                        <input type="password" id="spotify-client-secret" placeholder="Entrez le Client Secret Spotify">
+                    </div>
+                    
+                    <details>
+                        <summary>ℹ️ Comment obtenir ces identifiants ?</summary>
+                        <div class="details-content">
+                            <ol>
+                                <li>Rendez-vous sur le <a href="https://developer.spotify.com/dashboard" target="_blank" style="color: var(--spotify-green)">Developer Dashboard Spotify</a> et connectez-vous.</li>
+                                <li>Cliquez sur <strong>Create App</strong>.</li>
+                                <li>Nommez votre application (ex: "SpotifyToYTMusic").</li>
+                                <li>Ajoutez l'URL de redirection suivante dans le champ <strong>Redirect URIs</strong> : <br><code>http://127.0.0.1:3000/api/spotify/callback</code></li>
+                                <li>Cochez les conditions et enregistrez.</li>
+                                <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong> (depuis les paramètres de l'app Spotify) et collez-les ici.</li>
+                            </ol>
+                        </div>
+                    </details>
+                    
+                    <div class="flex-buttons" style="margin-bottom: 1.5rem;">
+                        <button class="btn btn-secondary" id="btn-save-spotify">Sauvegarder</button>
+                        <button class="btn btn-spotify" id="btn-auth-spotify" disabled>Se connecter à Spotify</button>
+                    </div>
                 </div>
 
                 <!-- Section Alternative Sans Premium -->
