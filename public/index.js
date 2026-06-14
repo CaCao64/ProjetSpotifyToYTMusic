@@ -2503,6 +2503,7 @@ function filterYtTracksTable() {
 
 // Start matching from YTM to Spotify
 async function startYtMatching() {
+    let configErrorOccurred = null;
     const btnLoadYtSongs = document.getElementById('btn-load-yt-songs');
     const btnYtStartMatching = document.getElementById('btn-yt-start-matching');
     
@@ -2616,11 +2617,15 @@ async function startYtMatching() {
                     candidates: [],
                     manual: false,
                     searching: false,
-                    error: true
+                    error: true,
+                    errorMessage: data.error
                 };
+                if (data.isPremiumError || data.isExpiredToken || (data.error && (data.error.includes('credentials') || data.error.includes('authorized') || data.error.includes('Premium') || data.error.includes('exceeded')))) {
+                    configErrorOccurred = data.error;
+                }
                 const row = document.getElementById(`yt-row-${track.videoId}`);
                 if (row) row.className = 'no-match-row';
-                cell.innerHTML = `<span class="match-badge low">Erreur</span>`;
+                cell.innerHTML = `<span class="match-badge low" title="${data.error || 'Erreur'}">Erreur</span>`;
             }
         } catch (e) {
             ytState.matches[track.videoId] = {
@@ -2628,11 +2633,12 @@ async function startYtMatching() {
                 candidates: [],
                 manual: false,
                 searching: false,
-                error: true
+                error: true,
+                errorMessage: e.message
             };
             const row = document.getElementById(`yt-row-${track.videoId}`);
             if (row) row.className = 'no-match-row';
-            cell.innerHTML = `<span class="match-badge low">Erreur Réseau</span>`;
+            cell.innerHTML = `<span class="match-badge low" title="${e.message || 'Erreur Réseau'}">Erreur Réseau</span>`;
         } finally {
             activeSearches--;
             processedTracks++;
@@ -2674,6 +2680,10 @@ async function startYtMatching() {
     
     while (activeSearches > 0) {
         await new Promise(r => setTimeout(r, 100));
+    }
+    
+    if (configErrorOccurred) {
+        alert(`⚠️ Une erreur est survenue lors du matching Spotify :\n\n"${configErrorOccurred}"\n\nSi vous n'avez pas de compte Spotify Premium, veuillez obtenir et coller un "Jeton Web Player" dans le panneau de configuration Spotify en haut de page.`);
     }
     
     btnYtStartMatching.removeAttribute('disabled');

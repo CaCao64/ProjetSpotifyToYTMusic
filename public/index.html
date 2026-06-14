@@ -893,11 +893,17 @@
             <div id="panel-spotify-to-yt" class="tab-panel active">
                 <!-- Warning Banner if Spotify API fails (No Premium) -->
                 <div class="premium-warning-banner" id="spotify-premium-warning-banner" style="display: none;">
-                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis)</h4>
+                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis ou identifiants restreints)</h4>
                     <p>
-                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte). 
+                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte par Spotify). 
                         Le chargement en direct via l'API Spotify ne fonctionnera pas.
-                        <strong>Vous pouvez toujours extraire vos titres gratuitement en utilisant l'option Sans Premium :</strong>
+                    </p>
+                    <p style="margin-top: 0.5rem; background: rgba(29, 185, 84, 0.1); border-left: 4px solid var(--spotify-green); padding: 0.75rem 1rem; border-radius: 0.25rem;">
+                        💡 <strong>Astuce :</strong> Vous pouvez <strong>activer le chargement direct sur ce dashboard</strong> en configurant simplement un <strong>Jeton Web Player</strong> gratuit. 
+                        <a href="#setup-section" style="color: var(--spotify-green); font-weight: bold; text-decoration: underline; margin-left: 0.25rem;">Configurer le Jeton Web Player en haut de page ↑</a>
+                    </p>
+                    <p style="margin-top: 1rem;">
+                        <strong>Alternative - Extraction directe par la console (Sans Premium) :</strong>
                     </p>
                     <div class="instruction-box">
                         <ol>
@@ -1046,11 +1052,17 @@
             <div id="panel-yt-to-spotify" class="tab-panel" style="display: none;">
                 <!-- Warning Banner if Spotify API fails (No Premium) -->
                 <div class="premium-warning-banner" id="yt-premium-warning-banner" style="display: none;">
-                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis)</h4>
+                    <h4>⚠️ API Spotify Bloquée (Spotify Premium requis ou identifiants restreints)</h4>
                     <p>
-                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte). 
-                        Le transfert direct via l'API Spotify ne fonctionnera pas.
-                        <strong>Vous pouvez toujours transférer vos titres gratuitement en utilisant l'option Sans Premium :</strong>
+                        Votre compte Spotify n'est pas Premium (ou votre application de développement Spotify est bloquée/restreinte par Spotify). 
+                        Le transfert direct classique via l'API ne fonctionnera pas.
+                    </p>
+                    <p style="margin-top: 0.5rem; background: rgba(29, 185, 84, 0.1); border-left: 4px solid var(--spotify-green); padding: 0.75rem 1rem; border-radius: 0.25rem;">
+                        💡 <strong>Astuce :</strong> Vous pouvez <strong>activer le matching/la recherche sur ce dashboard</strong> et l'option "Copier les URIs" en configurant simplement un <strong>Jeton Web Player</strong> gratuit. 
+                        <a href="#setup-section" style="color: var(--spotify-green); font-weight: bold; text-decoration: underline; margin-left: 0.25rem;">Configurer le Jeton Web Player en haut de page ↑</a>
+                    </p>
+                    <p style="margin-top: 1rem;">
+                        <strong>Alternative - Transfert direct par la console (Sans Premium) :</strong>
                     </p>
                     <div class="instruction-box">
                         <ol>
