@@ -920,12 +920,21 @@ input[type="checkbox"].track-selector {
     box-shadow: 0 0 15px var(--spotify-glow);
 }
 
-/* Active state for YouTube Music tab */
-.tabs #btn-tab-yt-to-spotify.active {
+/* Active state for YouTube Music tabs */
+.tabs #btn-tab-yt-to-spotify.active,
+.tabs #btn-tab-yt-merge.active,
+.tabs #btn-tab-yt-copy.active {
     background: rgba(255, 0, 51, 0.1);
     border-color: var(--youtube-red);
     color: var(--text-primary);
     box-shadow: 0 0 15px var(--youtube-glow);
+}
+
+.yt-logo-icon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    vertical-align: middle;
 }
 
 /* Tab Panels Visibility */
