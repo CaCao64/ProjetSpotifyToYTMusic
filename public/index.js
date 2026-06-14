@@ -1533,16 +1533,271 @@ function copyScraperScript() {
     alert('Le script d\'extraction a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur (F12 -> onglet Console) sur open.spotify.com/collection/tracks pour générer votre fichier.');
 }
 
+function getDirectTransferScript(tracks, playlistName) {
+    return `(async () => {
+    console.log("🚀 Démarrage du transfert YouTube Music vers Spotify (Sans Premium)...");
+    
+    // 1. Get access token
+    let token;
+    try {
+        const res = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
+        const data = await res.json();
+        token = data.accessToken;
+    } catch (e) {
+        console.error("Erreur de récupération du jeton :", e);
+    }
+    
+    if (!token) {
+        token = prompt("Impossible de récupérer le jeton automatiquement. Veuillez coller votre jeton d'accès Spotify (commençant par BQ) :");
+        if (!token) {
+            console.log("❌ Transfert annulé.");
+            return;
+        }
+    }
+    
+    // 2. Embedded tracks data
+    const tracks = ${JSON.stringify(tracks)};
+    const totalTracks = tracks.length;
+    console.log("🎵 " + totalTracks + " titres chargés pour le transfert.");
+    
+    // 3. Choice of destination
+    const destChoice = prompt("Où voulez-vous importer ces titres ?\\n1 - Titres Likés (Liked Songs)\\n2 - Une nouvelle playlist", "2");
+    if (destChoice !== '1' && destChoice !== '2') {
+        console.log("❌ Choix invalide. Transfert annulé.");
+        return;
+    }
+    
+    let playlistId = 'LM';
+    if (destChoice === '2') {
+        const playlistName = prompt("Entrez le nom de la nouvelle playlist Spotify :", "${playlistName.replace(/"/g, '\\"')}");
+        if (!playlistName) {
+            console.log("❌ Nom de playlist invalide. Transfert annulé.");
+            return;
+        }
+        
+        console.log("🆕 Création de la playlist \\"" + playlistName + "\\"...");
+        const createRes = await fetch("https://api.spotify.com/v1/me/playlists", {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: playlistName,
+                description: 'Transféré depuis YouTube Music via ProjetSpotifyToYTMusic',
+                public: false
+            })
+        });
+        
+        if (!createRes.ok) {
+            const errText = await createRes.text();
+            alert("Impossible de créer la playlist : " + createRes.status + " " + errText);
+            return;
+        }
+        const createData = await createRes.json();
+        playlistId = createData.id;
+        console.log("✅ Playlist créée avec succès ! ID: " + playlistId);
+    }
+    
+    // Helper function for fetch retries on 429
+    const fetchWithRetry = async (url, options = {}, retries = 5) => {
+        let delay = 2000;
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const res = await fetch(url, options);
+                if (res.status === 429) {
+                    const retryAfter = res.headers.get('Retry-After') || res.headers.get('retry-after');
+                    const waitTime = retryAfter ? (parseInt(retryAfter) + 1) * 1000 : delay;
+                    console.warn("⏳ [Rate Limit] Pause de " + Math.round(waitTime/1000) + "s...");
+                    await new Promise(r => setTimeout(r, waitTime));
+                    delay *= 2;
+                    continue;
+                }
+                return res;
+            } catch (err) {
+                if (attempt === retries - 1) throw err;
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
+        }
+        return fetch(url, options);
+    };
+    
+    const cleanString = (str) => {
+        if (!str) return '';
+        return str.toLowerCase()
+            .normalize("NFD")
+            .replace(/[\\u0300-\\u036f]/g, "")
+            .replace(/\\((feat|featuring|with|ft)\\.?\\s+.*?\\)/gi, '')
+            .replace(/\\[(feat|featuring|with|ft)\\.?\\s+.*?\\]/gi, '')
+            .replace(/\\b(feat|featuring|with|ft)\\.?\\s+.*/gi, '')
+            .replace(/\\((official video|official audio|music video|lyrics?\\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\\)/gi, '')
+            .replace(/\\[(official video|official audio|music video|lyrics?\\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)\\]/gi, '')
+            .replace(/-\\s+(official video|official audio|music video|lyrics?\\s*video|lyrics?|clip officiel|video clip|clip|hq|hd|4k)$/gi, '')
+            .replace(/\\((.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\\)/gi, '')
+            .replace(/\\[(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)\\]/gi, '')
+            .replace(/-\\s+(.*?remaster.*?|re-recorded|live|radio edit|deluxe|bonus|.*?revisited.*?)$/gi, '')
+            .replace(/\\s+remaster(ed)?(\\s+\\d+)?/gi, '')
+            .replace(/[^\\w\\s]/g, '')
+            .replace(/\\s+/g, ' ')
+            .trim();
+    };
+    
+    const stringSimilarity = (s1, s2) => {
+        if (!s1 || !s2) return 0;
+        const words1 = new Set(s1.split(' '));
+        const words2 = new Set(s2.split(' '));
+        let intersection = 0;
+        for (const w of words1) {
+            if (words2.has(w)) intersection++;
+        }
+        const union = words1.size + words2.size - intersection;
+        return union === 0 ? 0 : intersection / union;
+    };
+    
+    const calculateMatchScore = (ytTrack, spotifyCandidate) => {
+        const titleScore = stringSimilarity(cleanString(ytTrack.title), cleanString(spotifyCandidate.name));
+        const artistScore = stringSimilarity(cleanString(ytTrack.artist), cleanString(spotifyCandidate.artists.map(a => a.name).join(', ')));
+        const ytDuration = ytTrack.duration_seconds || 0;
+        const spotifyDuration = spotifyCandidate.duration_ms / 1000;
+        const durationDiff = Math.abs(ytDuration - spotifyDuration);
+        let durationScore = 1;
+        if (durationDiff > 15) {
+            durationScore = Math.max(0, 1 - (durationDiff - 15) / 30);
+        }
+        return (titleScore * 0.45) + (artistScore * 0.45) + (durationScore * 0.1);
+    };
+    
+    console.log("🔍 Recherche des correspondances sur Spotify...");
+    const matchedSpotifyIds = [];
+    let successCount = 0;
+    
+    for (let i = 0; i < totalTracks; i++) {
+        const t = tracks[i];
+        console.log("[" + (i+1) + "/" + totalTracks + "] Recherche de \\"" + t.title + " - " + t.artist + "\\"...");
+        try {
+            const query = encodeURIComponent(t.title + " " + t.artist);
+            const searchRes = await fetchWithRetry("https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5", {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const searchData = await searchRes.json();
+            const candidates = searchData.tracks?.items || [];
+            
+            if (candidates.length > 0) {
+                const scoredCandidates = candidates.map(c => ({
+                    candidate: c,
+                    score: calculateMatchScore(t, c)
+                }));
+                scoredCandidates.sort((a, b) => b.score - a.score);
+                const best = scoredCandidates[0];
+                if (best.score >= 0.45) {
+                    matchedSpotifyIds.push(best.candidate.id);
+                    console.log("   ✅ Match trouvé : \\"" + best.candidate.name + "\\" par " + best.candidate.artists.map(a=>a.name).join(', ') + " (" + Math.round(best.score*100) + "% match)");
+                    successCount++;
+                } else {
+                    console.warn("   ⚠️ Score de correspondance trop faible (" + Math.round(best.score*100) + "%)");
+                }
+            } else {
+                console.warn("   ❌ Aucun candidat trouvé sur Spotify.");
+            }
+        } catch (err) {
+            console.error("   ❌ Erreur lors de la recherche :", err);
+        }
+        await new Promise(r => setTimeout(r, 200));
+    }
+    
+    if (matchedSpotifyIds.length === 0) {
+        alert("❌ Aucun titre n'a pu être matché sur Spotify.");
+        return;
+    }
+    
+    console.log("📊 Recherche terminée. " + matchedSpotifyIds.length + "/" + totalTracks + " correspondances trouvées.");
+    console.log("📥 Ajout des titres sur Spotify...");
+    
+    const batchSize = playlistId === 'LM' ? 50 : 100;
+    const batches = [];
+    for (let i = 0; i < matchedSpotifyIds.length; i += batchSize) {
+        batches.push(matchedSpotifyIds.slice(i, i + batchSize));
+    }
+    
+    let addedCount = 0;
+    for (let b = 0; b < batches.length; b++) {
+        const batch = batches[b];
+        console.log("📤 Ajout du lot " + (b+1) + "/" + batches.length + " (" + batch.length + " titres)...");
+        try {
+            if (playlistId === 'LM') {
+                const addRes = await fetchWithRetry('https://api.spotify.com/v1/me/tracks', {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ ids: batch })
+                });
+                if (!addRes.ok) throw new Error(await addRes.text());
+            } else {
+                const uris = batch.map(id => 'spotify:track:' + id);
+                const addRes = await fetchWithRetry("https://api.spotify.com/v1/playlists/" + playlistId + "/tracks", {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ uris: uris })
+                });
+                if (!addRes.ok) throw new Error(await addRes.text());
+            }
+            addedCount += batch.length;
+            console.log("   ✅ Lot " + (b+1) + " ajouté.");
+        } catch (err) {
+            console.error("   ❌ Erreur lors de l'ajout du lot " + (b+1) + " :", err);
+        }
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    
+    alert("🎉 Transfert terminé avec succès !\\n\\n" + addedCount + " titres sur " + totalTracks + " ont été ajoutés à votre compte Spotify.");
+})();\`;
+}
+
 function copyTransferScript() {
-    const transferScriptArea = document.getElementById('transfer-script-area');
-    if (!transferScriptArea) return;
+    let script = '';
+    const tracks = ytState.tracks;
     
-    transferScriptArea.style.display = 'block';
-    transferScriptArea.select();
-    document.execCommand('copy');
-    transferScriptArea.style.display = 'none';
+    if (tracks.length === 0) {
+        const transferScriptArea = document.getElementById('transfer-script-area');
+        if (transferScriptArea) {
+            script = transferScriptArea.value;
+        }
+    } else {
+        const playlistSelect = document.getElementById('yt-source-playlist-select');
+        let playlistName = "YTM Import";
+        if (playlistSelect) {
+            const selectedOpt = playlistSelect.options[playlistSelect.selectedIndex];
+            if (selectedOpt && selectedOpt.text) {
+                playlistName = selectedOpt.text.replace(/🟢|🔴|⚡|🔑|🌐/g, '').trim();
+            }
+        }
+        
+        const simplifiedTracks = tracks.map(t => ({
+            title: t.title,
+            artist: t.artist,
+            duration_seconds: t.duration_seconds
+        }));
+        
+        script = getDirectTransferScript(simplifiedTracks, playlistName);
+    }
     
-    alert('Le script de transfert a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur (F12 -> onglet Console) sur open.spotify.com pour importer vos musiques.');
+    if (!script) return;
+    
+    navigator.clipboard.writeText(script).then(() => {
+        if (tracks.length === 0) {
+            alert('Le script de transfert générique a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur sur open.spotify.com pour importer vos musiques.');
+        } else {
+            alert('Le script de transfert direct contenant vos ' + tracks.length + ' titres YTM a été copié !\n\nCollez-le directement dans la console de votre navigateur (F12 -> onglet Console) sur open.spotify.com pour démarrer le transfert automatique sans aucune autre manipulation !');
+        }
+    }).catch(err => {
+        alert('Échec de la copie automatique : ' + err.message);
+    });
 }
 
 // ==========================================
@@ -2470,11 +2725,10 @@ function handleYtFileImport(e) {
     reader.readAsText(file);
 }
 
-// Copy robust script to clipboard helper
 window.copySpotifyExtractionScript = function() {
-    const script = `copy((()=>{const t=s=>typeof s=='string'&&/^BQ[a-zA-Z0-9_\\\\-]{100,450}$/.test(s);let tok='';try{tok=JSON.parse(document.getElementById('session').textContent).accessToken}catch(e){}if(!t(tok)){try{for(let i=0;i<localStorage.length;i++){let v=localStorage.getItem(localStorage.key(i));if(t(v)){tok=v;break}try{let o=JSON.parse(v);for(let k in o){if(t(o[k])){tok=o[k];break}}}catch(e){}if(tok)break}}catch(e){}}if(!t(tok)){try{for(let i=0;i<sessionStorage.length;i++){let v=sessionStorage.getItem(sessionStorage.key(i));if(t(v)){tok=v;break}try{let o=JSON.parse(v);for(let k in o){if(t(o[k])){tok=o[k];break}}}catch(e){}if(tok)break}}catch(e){}}if(!t(tok)){try{const sc=(o,seen=new Set())=>{if(!o||typeof o!='object'||seen.has(o))return null;seen.add(o);for(let k in o){try{let v=o[k];if(t(v))return v;if(v&&typeof v=='object'){let r=sc(v,seen);if(r)return r}}catch(e){}}return null};for(let el of document.querySelectorAll('*')){for(let k of Object.keys(el)){if(k.startsWith('__react')){let tk=sc(el[k]);if(t(tk)){tok=tk;break}}}if(tok)break}}catch(e){}}if(t(tok)){console.log('Jeton Spotify Web Player :',tok);return tok;}else{console.error('Jeton introuvable.');return 'Jeton introuvable';}})())`;
+    const script = `fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").then(r=>r.json()).then(d=>{copy(d.accessToken);console.log("Jeton d'accès copié dans le presse-papiers :",d.accessToken);})`;
     navigator.clipboard.writeText(script).then(() => {
-        alert('Le script d\'extraction robuste a été copié dans votre presse-papiers !');
+        alert('Le script d\'extraction rapide a été copié dans votre presse-papiers !');
     }).catch(err => {
         alert('Échec de la copie automatique. Veuillez copier le texte du script manuellement.');
     });
