@@ -1764,15 +1764,55 @@ function getDirectTransferScript(tracks, playlistName) {
     const totalTracks = tracks.length;
     console.log("🎵 " + totalTracks + " titres chargés pour le transfert.");
     
+    // Helper function for fetch retries on 429
+    const fetchWithRetry = async (url, options = {}, retries = 5) => {
+        let delay = 2000;
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const res = await fetch(url, options);
+                if (res.status === 429) {
+                    const retryAfter = res.headers.get('Retry-After') || res.headers.get('retry-after');
+                    const waitTime = retryAfter ? (parseInt(retryAfter) + 1) * 1000 : delay;
+                    console.warn("⏳ [Rate Limit] Pause de " + Math.round(waitTime/1000) + "s...");
+                    await new Promise(r => setTimeout(r, waitTime));
+                    delay *= 2;
+                    continue;
+                }
+                return res;
+            } catch (err) {
+                if (attempt === retries - 1) throw err;
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
+        }
+        return fetch(url, options);
+    };
+
     // 3. Choice of destination
-    const destChoice = prompt("Où voulez-vous importer ces titres ?\\n1 - Titres Likés (Liked Songs)\\n2 - Une nouvelle playlist", "2");
-    if (destChoice !== '1' && destChoice !== '2') {
+    const destChoice = prompt(
+        "Où voulez-vous importer ces titres ?\\n" +
+        "1 - Titres Likés (Liked Songs)\\n" +
+        "2 - Une nouvelle playlist\\n" +
+        "3 - Une playlist existante (Saisir le lien ou l'ID)\\n" +
+        "4 - Copier uniquement les URIs Spotify (pour collage direct Ctrl+V sur l'application Desktop)", 
+        "2"
+    );
+    if (destChoice !== '1' && destChoice !== '2' && destChoice !== '3' && destChoice !== '4') {
         console.log("❌ Choix invalide. Transfert annulé.");
         return;
     }
     
     let playlistId = 'LM';
-    if (destChoice === '2') {
+    if (destChoice === '3') {
+        const input = prompt("Entrez le lien ou l'ID de votre playlist Spotify existante :");
+        if (!input) {
+            console.log("❌ Transfert annulé.");
+            return;
+        }
+        const match = input.match(/playlist\\/([a-zA-Z0-9]{22})/);
+        playlistId = match ? match[1] : input.trim();
+        console.log("📂 Utilisation de la playlist existante : ID " + playlistId);
+    } else if (destChoice === '2') {
         const playlistName = prompt("Entrez le nom de la nouvelle playlist Spotify :", "${escapedPlaylistName}");
         if (!playlistName) {
             console.log("❌ Nom de playlist invalide. Transfert annulé.");
@@ -1780,7 +1820,7 @@ function getDirectTransferScript(tracks, playlistName) {
         }
         
         console.log("🆕 Création de la playlist \\"" + playlistName + "\\"...");
-        const createRes = await fetch("https://api.spotify.com/v1/me/playlists", {
+        const createRes = await fetchWithRetry("https://api.spotify.com/v1/me/playlists", {
             method: 'POST',
             headers: {
                 'Authorization': 'Bearer ' + token,
@@ -1806,30 +1846,6 @@ function getDirectTransferScript(tracks, playlistName) {
         playlistId = createData.id;
         console.log("✅ Playlist créée avec succès ! ID: " + playlistId);
     }
-    
-    // Helper function for fetch retries on 429
-    const fetchWithRetry = async (url, options = {}, retries = 5) => {
-        let delay = 2000;
-        for (let attempt = 0; attempt < retries; attempt++) {
-            try {
-                const res = await fetch(url, options);
-                if (res.status === 429) {
-                    const retryAfter = res.headers.get('Retry-After') || res.headers.get('retry-after');
-                    const waitTime = retryAfter ? (parseInt(retryAfter) + 1) * 1000 : delay;
-                    console.warn("⏳ [Rate Limit] Pause de " + Math.round(waitTime/1000) + "s...");
-                    await new Promise(r => setTimeout(r, waitTime));
-                    delay *= 2;
-                    continue;
-                }
-                return res;
-            } catch (err) {
-                if (attempt === retries - 1) throw err;
-                await new Promise(r => setTimeout(r, delay));
-                delay *= 2;
-            }
-        }
-        return fetch(url, options);
-    };
     
     const cleanString = (str) => {
         if (!str) return '';
@@ -1924,6 +1940,21 @@ function getDirectTransferScript(tracks, playlistName) {
     }
     
     console.log("📊 Recherche terminée. " + matchedSpotifyIds.length + "/" + totalTracks + " correspondances trouvées.");
+    
+    if (destChoice === '4') {
+        const uris = matchedSpotifyIds.map(id => 'spotify:track:' + id).join('\\n');
+        if (typeof copy === 'function') {
+            copy(uris);
+        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(uris);
+        } else {
+            console.log("📋 Copiez la liste d'URIs ci-dessous :");
+            console.log(uris);
+        }
+        alert("🎉 " + matchedSpotifyIds.length + " URIs Spotify ont été copiées dans le presse-papiers !\\n\\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans passer par l'API.");
+        return;
+    }
+    
     console.log("📥 Ajout des titres sur Spotify...");
     
     const batchSize = playlistId === 'LM' ? 50 : 100;
