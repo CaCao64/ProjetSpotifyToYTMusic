@@ -134,6 +134,11 @@ function setupEventListeners() {
         btnYtCopyScriptDirect.addEventListener('click', copyTransferScript);
     }
     
+    const btnCopyCleanScript = document.getElementById('btn-copy-clean-script');
+    if (btnCopyCleanScript) {
+        btnCopyCleanScript.addEventListener('click', copyYtCleanScript);
+    }
+    
     // Tabs Navigation (Merge & Copy)
     const btnTabYtMerge = document.getElementById('btn-tab-yt-merge');
     const btnTabYtCopy = document.getElementById('btn-tab-yt-copy');
@@ -2125,6 +2130,20 @@ function copyTransferScript() {
             }
         } else {
             prompt("Échec de la copie automatique.\nFaites Ctrl+C pour copier le script de transfert ci-dessous :", script);
+        }
+    });
+}
+
+function copyYtCleanScript() {
+    const cleanScriptArea = document.getElementById('clean-script-area');
+    if (!cleanScriptArea) return;
+    
+    const script = cleanScriptArea.value;
+    window.robustCopyText(script).then((copied) => {
+        if (copied) {
+            alert("Le script de nettoyage de bibliothèque a été copié dans votre presse-papiers !\n\nCollez-le dans la console de votre navigateur sur music.youtube.com (page Titres Likés) pour retirer le \"J'aime\" de vos morceaux.");
+        } else {
+            prompt("Échec de la copie automatique.\nFaites Ctrl+C pour copier le script de nettoyage ci-dessous :", script);
         }
     });
 }

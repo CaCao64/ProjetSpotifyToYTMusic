@@ -303,12 +303,87 @@
                 <button class="btn btn-yt" id="btn-save-yt">Sauvegarder l'authentification</button>
 
                 <!-- Section Outils YouTube Music -->
-                <div id="yt-tools-section" style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+                <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
                     <h3 style="font-family: var(--font-display); font-size: 1.05rem; margin-bottom: 0.5rem; color: var(--youtube-red);">🗑️ Nettoyage de la bibliothèque</h3>
                     <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
-                        Vous pouvez supprimer tous les titres de la playlist "Titres likés" (Liked Music) sur YouTube Music. Cette action est irréversible.
+                        Vous pouvez supprimer tous les titres de la playlist "Titres likés" (Liked Music) sur YouTube Music.
                     </p>
-                    <button class="btn btn-secondary" id="btn-clear-liked" style="background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.25); color: var(--danger); font-size: 0.8rem; padding: 0.6rem 1.2rem;">Supprimer les titres likés</button>
+                    
+                    <!-- Option 1 : local API (shown only when YTM headers are configured) -->
+                    <div id="yt-tools-section" style="display: none; margin-bottom: 1rem;">
+                        <span style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 0.35rem;">Option 1 : Via l'API locale (Recommandé)</span>
+                        <button class="btn btn-secondary" id="btn-clear-liked" style="background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.25); color: var(--danger); font-size: 0.8rem; padding: 0.6rem 1.2rem; width: auto; font-weight: 600; text-transform: none; box-shadow: none;">Supprimer les titres likés</button>
+                    </div>
+                    
+                    <!-- Option 2 : Browser console script (always shown) -->
+                    <div style="margin-top: 0.75rem;">
+                        <span style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 0.25rem;">⚡ Option alternative : Sans configuration (Script console)</span>
+                        <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                            Exécutez ce script directement dans la console de YouTube Music pour unlike tous vos morceaux d'un coup.
+                        </p>
+                        <details style="margin-bottom: 0.75rem;">
+                            <summary style="padding: 0.4rem 0.8rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; color: var(--text-secondary);">Instructions de nettoyage</summary>
+                            <div class="details-content" style="font-size: 0.75rem; padding: 0 1rem 1rem 1.5rem; line-height: 1.5; color: var(--text-secondary);">
+                                <ol>
+                                    <li>Ouvrez <a href="https://music.youtube.com/playlist?list=LM" target="_blank" style="color: var(--youtube-red); text-decoration: underline;">Vos Titres Likés sur YouTube Music</a>.</li>
+                                    <li>Ouvrez la console de votre navigateur (Touche <code>F12</code> puis onglet <strong>Console</strong>).</li>
+                                    <li>Cliquez sur le bouton ci-dessous pour copier le script de nettoyage.</li>
+                                    <li>Collez le script dans la console de YouTube Music et appuyez sur <strong>Entrée</strong>.</li>
+                                </ol>
+                            </div>
+                        </details>
+                        <button class="btn btn-secondary" id="btn-copy-clean-script" style="font-size: 0.8rem; padding: 0.5rem 1rem; width: auto; text-transform: none; font-weight: 600; box-shadow: none; color: var(--text-primary);">📋 Copier le script de nettoyage</button>
+                        
+                        <textarea id="clean-script-area" readonly style="display: none;">(async () => {
+    console.log("🧹 Démarrage du nettoyage automatique de la bibliothèque YouTube Music...");
+    
+    if (!window.location.href.includes("music.youtube.com/playlist?list=LM")) {
+        alert("Veuillez vous rendre sur la page de vos titres likés YouTube Music avant de lancer le script :\nhttps://music.youtube.com/playlist?list=LM");
+        return;
+    }
+
+    let totalUnliked = 0;
+    
+    async function unlikeBatch() {
+        const renderers = document.querySelectorAll('ytmusic-like-button-renderer');
+        const liked = Array.from(renderers).filter(r => r.getAttribute('like-status') === 'LIKE');
+        
+        if (liked.length === 0) return 0;
+        
+        console.log(`Trouvé ${liked.length} titre(s) liké(s) dans la vue actuelle. Nettoyage...`);
+        
+        for (const renderer of liked) {
+            try {
+                const thumbsUpButton = renderer.querySelector('#button-shape-like button') || renderer.querySelector('button[aria-pressed="true"]') || renderer.querySelector('button');
+                if (thumbsUpButton) {
+                    thumbsUpButton.click();
+                    totalUnliked++;
+                    await new Promise(r => setTimeout(r, 600));
+                }
+            } catch (e) {
+                console.error("Erreur lors de la suppression du like :", e);
+            }
+        }
+        return liked.length;
+    }
+    
+    let consecutiveEmptyCycles = 0;
+    while (consecutiveEmptyCycles < 5) {
+        const unlikedInBatch = await unlikeBatch();
+        if (unlikedInBatch === 0) {
+            consecutiveEmptyCycles++;
+            console.log("Aucun titre liké trouvé dans la vue actuelle. Défilement vers le bas pour charger plus de titres...");
+            window.scrollTo(0, document.body.scrollHeight || document.documentElement.scrollHeight);
+            await new Promise(r => setTimeout(r, 2000));
+        } else {
+            consecutiveEmptyCycles = 0;
+        }
+    }
+    
+    console.log(`🎉 Nettoyage terminé ! Total de likes retirés : ${totalUnliked}`);
+    alert(`🎉 Nettoyage terminé !\n\nTotal de likes retirés : ${totalUnliked} titres.`);
+})();</textarea>
+                    </div>
                 </div>
 
                 <!-- Section Alternative Sans Premium : YTM -> Spotify -->
