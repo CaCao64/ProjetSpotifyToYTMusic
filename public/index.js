@@ -2470,3 +2470,13 @@ function handleYtFileImport(e) {
     reader.readAsText(file);
 }
 
+// Copy robust script to clipboard helper
+window.copySpotifyExtractionScript = function() {
+    const script = `copy((()=>{const t=s=>typeof s=='string'&&/^BQ[a-zA-Z0-9_\\\\-]{100,450}$/.test(s);let tok='';try{tok=JSON.parse(document.getElementById('session').textContent).accessToken}catch(e){}if(!t(tok)){try{for(let i=0;i<localStorage.length;i++){let v=localStorage.getItem(localStorage.key(i));if(t(v)){tok=v;break}try{let o=JSON.parse(v);for(let k in o){if(t(o[k])){tok=o[k];break}}}catch(e){}if(tok)break}}catch(e){}}if(!t(tok)){try{for(let i=0;i<sessionStorage.length;i++){let v=sessionStorage.getItem(sessionStorage.key(i));if(t(v)){tok=v;break}try{let o=JSON.parse(v);for(let k in o){if(t(o[k])){tok=o[k];break}}}catch(e){}if(tok)break}}catch(e){}}if(!t(tok)){try{const sc=(o,seen=new Set())=>{if(!o||typeof o!='object'||seen.has(o))return null;seen.add(o);for(let k in o){try{let v=o[k];if(t(v))return v;if(v&&typeof v=='object'){let r=sc(v,seen);if(r)return r}}catch(e){}}return null};for(let el of document.querySelectorAll('*')){for(let k of Object.keys(el)){if(k.startsWith('__react')){let tk=sc(el[k]);if(t(tk)){tok=tk;break}}}if(tok)break}}catch(e){}}if(t(tok)){console.log('Jeton Spotify Web Player :',tok);return tok;}else{console.error('Jeton introuvable.');return 'Jeton introuvable';}})())`;
+    navigator.clipboard.writeText(script).then(() => {
+        alert('Le script d\'extraction robuste a été copié dans votre presse-papiers !');
+    }).catch(err => {
+        alert('Échec de la copie automatique. Veuillez copier le texte du script manuellement.');
+    });
+};
+

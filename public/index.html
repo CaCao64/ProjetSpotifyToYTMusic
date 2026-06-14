@@ -51,10 +51,10 @@
                             <ol style="margin-left: 1.2rem;">
                                 <li>Ouvrez <a href="https://open.spotify.com" target="_blank" style="color: var(--spotify-green); text-decoration: underline;">Spotify Web Player</a> et connectez-vous.</li>
                                 <li>Ouvrez la console du navigateur (Touche <code>F12</code>, puis onglet <strong>Console</strong>).</li>
-                                <li>Copiez-collez la ligne suivante dans la console et appuyez sur <strong>Entrée</strong> :<br>
-                                    <code style="background: rgba(0,0,0,0.4); padding: 0.2rem 0.4rem; border-radius: 3px; display: block; margin: 0.3rem 0; word-break: break-all; color: #a5f3fc; cursor: pointer;" onclick="navigator.clipboard.writeText('copy(JSON.parse(document.getElementById(\'session\').textContent).accessToken)') || alert('Code copié !')">copy(JSON.parse(document.getElementById('session').textContent).accessToken)</code>
+                                <li>Cliquez sur le bouton ci-dessous pour copier le script d'extraction automatique :<br>
+                                    <button class="btn btn-secondary" onclick="window.copySpotifyExtractionScript()" style="margin-top: 0.5rem; padding: 0.4rem 1rem; font-size: 0.75rem; text-transform: none; font-weight: 600; width: auto; color: var(--text-primary);">📋 Copier le script d'extraction</button>
                                 </li>
-                                <li>Le jeton est automatiquement copié dans votre presse-papiers ! Collez-le simplement ci-dessus.</li>
+                                <li>Collez le script dans la console, appuyez sur <strong>Entrée</strong>, puis collez le jeton copié dans le champ ci-dessus.</li>
                             </ol>
                         </div>
                     </details>
