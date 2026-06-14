@@ -1901,8 +1901,9 @@ function getDirectTransferScript(tracks, playlistName) {
         console.log("[" + (i+1) + "/" + totalTracks + "] Recherche de \\"" + t.title + " - " + t.artist + "\\"...");
         try {
             const query = encodeURIComponent(t.title + " " + t.artist);
-            const searchRes = await fetchWithRetry("https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5", {
-                headers: { 'Authorization': 'Bearer ' + token }
+            const searchRes = await fetchWithRetry("https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5&cb=" + Date.now(), {
+                headers: { 'Authorization': 'Bearer ' + token },
+                cache: 'no-store'
             });
             if (searchRes.status === 401) {
                 alert("❌ Votre jeton d'accès Spotify a expiré ou est invalide. Veuillez rafraîchir la page Spotify Web Player et relancer le script.");
