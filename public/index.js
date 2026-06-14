@@ -1546,20 +1546,217 @@ function getDirectTransferScript(tracks, playlistName) {
     
     // 1. Get access token
     let token;
-    try {
-        const res = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
-        const data = await res.json();
-        token = data.accessToken;
-    } catch (e) {
-        console.error("Erreur de récupération du jeton :", e);
-    }
+    const captureToken = async () => {
+        const isSpotifyToken = (str) => typeof str === 'string' && /^BQ[a-zA-Z0-9_\\-]{100,450}$/.test(str);
+        
+        // 1. Try internal fetch
+        try {
+            const res = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
+            const data = await res.json();
+            if (isSpotifyToken(data.accessToken)) {
+                console.log("✅ Jeton d'accès extrait de get_access_token.");
+                return data.accessToken;
+            }
+        } catch (e) {}
+        
+        // 2. Try to extract from #session script element
+        try {
+            const sessionEl = document.getElementById('session') || document.querySelector('#session');
+            if (sessionEl) {
+                const sessionData = JSON.parse(sessionEl.textContent || sessionEl.innerText);
+                if (isSpotifyToken(sessionData.accessToken)) {
+                    console.log("✅ Jeton d'accès extrait de la balise #session.");
+                    return sessionData.accessToken;
+                }
+            }
+        } catch (e) {}
+        
+        // 3. Scan all script tags on the page for accessToken
+        try {
+            for (const script of document.querySelectorAll('script')) {
+                const content = script.textContent || script.innerText || '';
+                if (content.includes('accessToken')) {
+                    const match = content.match(/"accessToken"\\s*:\\s*"([^"]+)"/);
+                    if (match && isSpotifyToken(match[1])) {
+                        console.log("✅ Jeton d'accès extrait des scripts de la page.");
+                        return match[1];
+                    }
+                }
+            }
+        } catch (e) {}
+        
+        // 4. Scan LocalStorage & SessionStorage
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const val = localStorage.getItem(key);
+                if (isSpotifyToken(val)) {
+                    console.log("✅ Jeton d'accès extrait de localStorage.");
+                    return val;
+                }
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) {
+                                console.log("✅ Jeton d'accès extrait de localStorage (JSON: " + key + "." + k + ").");
+                                return parsed[k];
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        
+        try {
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                const val = sessionStorage.getItem(key);
+                if (isSpotifyToken(val)) {
+                    console.log("✅ Jeton d'accès extrait de sessionStorage.");
+                    return val;
+                }
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) {
+                                console.log("✅ Jeton d'accès extrait de sessionStorage (JSON: " + key + "." + k + ").");
+                                return parsed[k];
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        
+        // 5. Scan React Fiber tree on DOM nodes for accessToken (Spotify is a React app)
+        try {
+            const evaluator = (obj, visited = new Set()) => {
+                if (!obj || typeof obj !== 'object' || visited.has(obj)) return null;
+                visited.add(obj);
+                
+                for (const key in obj) {
+                    try {
+                        const val = obj[key];
+                        if (isSpotifyToken(val)) {
+                            return val;
+                        }
+                        if (val && typeof val === 'object') {
+                            const res = evaluator(val, visited);
+                            if (res) return res;
+                        }
+                    } catch (e) {}
+                }
+                return null;
+            };
+            
+            const allElements = document.getElementsByTagName('*');
+            for (let i = 0; i < allElements.length; i++) {
+                const el = allElements[i];
+                for (const key of Object.keys(el)) {
+                    if (key.startsWith('__react') || key.startsWith('__reactFiber') || key.startsWith('__reactProps') || key.startsWith('__reactContainer')) {
+                        const token = evaluator(el[key]);
+                        if (token) {
+                            console.log("✅ Jeton d'accès extrait de l'arbre React DOM.");
+                            return token;
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+        
+        // 6. Intercept background/user fetch and XMLHttpRequest calls to spotify.com (fallback)
+        return new Promise((resolve) => {
+            console.log("⏳ En attente de détection automatique du jeton d'accès (patientez 2-3 secondes)...");
+            const originalFetch = window.fetch;
+            const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+            let resolved = false;
+            
+            const cleanup = () => {
+                window.fetch = originalFetch;
+                XMLHttpRequest.prototype.setRequestHeader = originalSetRequestHeader;
+            };
+            
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    cleanup();
+                    resolve(null);
+                }
+            }, 5000); // 5s timeout
+            
+            XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+                try {
+                    if (header && header.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
+                        const t = value.substring(7).trim();
+                        if (isSpotifyToken(t) && !resolved) {
+                            resolved = true;
+                            clearTimeout(timeoutId);
+                            cleanup();
+                            console.log("✅ Jeton d'accès détecté et intercepté via XMLHttpRequest !");
+                            resolve(t);
+                        }
+                    }
+                } catch (err) {
+                    console.error("Erreur d'interception XHR :", err);
+                }
+                return originalSetRequestHeader.apply(this, arguments);
+            };
+            
+            window.fetch = function(url, options) {
+                try {
+                    let urlStr = '';
+                    if (typeof url === 'string') {
+                        urlStr = url;
+                    } else if (url && typeof url === 'object' && url.url) {
+                        urlStr = url.url;
+                    }
+                    
+                    if (urlStr.includes('spotify.com')) {
+                        let auth = null;
+                        if (options && options.headers) {
+                            if (options.headers instanceof Headers) {
+                                auth = options.headers.get('Authorization');
+                            } else if (typeof options.headers === 'object') {
+                                auth = options.headers['Authorization'] || options.headers['authorization'];
+                            }
+                        }
+                        if (!auth && url && typeof url === 'object' && url.headers) {
+                            if (url.headers instanceof Headers) {
+                                auth = url.headers.get('Authorization');
+                            } else if (typeof url.headers === 'object') {
+                                auth = url.headers['Authorization'] || url.headers['authorization'];
+                            }
+                        }
+                        
+                        if (auth && auth.startsWith('Bearer ')) {
+                            const t = auth.substring(7).trim();
+                            if (isSpotifyToken(t) && !resolved) {
+                                resolved = true;
+                                clearTimeout(timeoutId);
+                                cleanup();
+                                console.log("✅ Jeton d'accès détecté et intercepté via Fetch !");
+                                resolve(t);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Erreur d'interception Fetch :", err);
+                }
+                return originalFetch.apply(this, arguments);
+            };
+        });
+    };
+    
+    token = await captureToken();
     
     if (!token) {
-        token = prompt("Impossible de récupérer le jeton automatiquement. Veuillez coller votre jeton d'accès Spotify (commençant par BQ) :");
+        token = prompt("Jeton d'accès automatique introuvable (Bloqué par Spotify).\\n\\nPour le récupérer manuellement :\\n1. Ouvrez l'onglet Réseau (Network) de la console (F12).\\n2. Cherchez ou lancez une action (ex: recherche, clic play) pour voir des requêtes vers 'api.spotify.com'.\\n3. Cliquez sur une requête (ex: 'search' ou 'me'), allez dans l'onglet 'Headers' et faites défiler jusqu'à 'Request Headers'.\\n4. Copiez la valeur de l'en-tête 'Authorization' en retirant le mot 'Bearer ' (ex: BQB...).\\n\\nCollez votre jeton d'accès Spotify ci-dessous :");
         if (!token) {
             console.log("❌ Transfert annulé.");
             return;
         }
+        token = token.trim();
     }
     
     // 2. Embedded tracks data
@@ -2779,7 +2976,173 @@ function handleYtFileImport(e) {
 }
 
 window.copySpotifyExtractionScript = function() {
-    const script = `fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").then(r=>r.json()).then(d=>{copy(d.accessToken);console.log("Jeton d'accès copié dans le presse-papiers :",d.accessToken);})`;
+    const script = `(async () => {
+    console.log("🚀 Démarrage du script d'extraction rapide du jeton Spotify...");
+    const isSpotifyToken = (str) => typeof str === 'string' && /^BQ[a-zA-Z0-9_\\-]{100,450}$/.test(str);
+    
+    const captureToken = async () => {
+        // 1. Try internal fetch
+        try {
+            const res = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
+            const data = await res.json();
+            if (isSpotifyToken(data.accessToken)) return data.accessToken;
+        } catch (e) {}
+        
+        // 2. Try #session element
+        try {
+            const sessionEl = document.getElementById('session') || document.querySelector('#session');
+            if (sessionEl) {
+                const sessionData = JSON.parse(sessionEl.textContent || sessionEl.innerText);
+                if (isSpotifyToken(sessionData.accessToken)) return sessionData.accessToken;
+            }
+        } catch (e) {}
+        
+        // 3. Scan scripts
+        try {
+            for (const script of document.querySelectorAll('script')) {
+                const content = script.textContent || script.innerText || '';
+                if (content.includes('accessToken')) {
+                    const match = content.match(/"accessToken"\\s*:\\s*"([^"]+)"/);
+                    if (match && isSpotifyToken(match[1])) return match[1];
+                }
+            }
+        } catch (e) {}
+        
+        // 4. Scan storage
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const val = localStorage.getItem(key);
+                if (isSpotifyToken(val)) return val;
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) return parsed[k];
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        try {
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                const val = sessionStorage.getItem(key);
+                if (isSpotifyToken(val)) return val;
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (const k in parsed) {
+                            if (isSpotifyToken(parsed[k])) return parsed[k];
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        
+        // 5. Scan React DOM
+        try {
+            const evaluator = (obj, visited = new Set()) => {
+                if (!obj || typeof obj !== 'object' || visited.has(obj)) return null;
+                visited.add(obj);
+                for (const key in obj) {
+                    try {
+                        const val = obj[key];
+                        if (isSpotifyToken(val)) return val;
+                        if (val && typeof val === 'object') {
+                            const res = evaluator(val, visited);
+                            if (res) return res;
+                        }
+                    } catch (e) {}
+                }
+                return null;
+            };
+            const allElements = document.getElementsByTagName('*');
+            for (let i = 0; i < allElements.length; i++) {
+                const el = allElements[i];
+                for (const key of Object.keys(el)) {
+                    if (key.startsWith('__react') || key.startsWith('__reactFiber') || key.startsWith('__reactProps') || key.startsWith('__reactContainer')) {
+                        const token = evaluator(el[key]);
+                        if (token) return token;
+                    }
+                }
+            }
+        } catch (e) {}
+        
+        // 6. Network Interception
+        return new Promise((resolve) => {
+            console.log("⏳ En attente de détection réseau (veuillez patienter ou faire une action)...");
+            const originalFetch = window.fetch;
+            const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+            let resolved = false;
+            const cleanup = () => {
+                window.fetch = originalFetch;
+                XMLHttpRequest.prototype.setRequestHeader = originalSetRequestHeader;
+            };
+            const timeoutId = setTimeout(() => {
+                if (!resolved) { cleanup(); resolve(null); }
+            }, 5000);
+            
+            XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+                try {
+                    if (header && header.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
+                        const t = value.substring(7).trim();
+                        if (isSpotifyToken(t) && !resolved) {
+                            resolved = true;
+                            clearTimeout(timeoutId);
+                            cleanup();
+                            resolve(t);
+                        }
+                    }
+                } catch (err) {}
+                return originalSetRequestHeader.apply(this, arguments);
+            };
+            
+            window.fetch = function(url, options) {
+                try {
+                    let urlStr = '';
+                    if (typeof url === 'string') urlStr = url;
+                    else if (url && typeof url === 'object' && url.url) urlStr = url.url;
+                    
+                    if (urlStr.includes('spotify.com')) {
+                        let auth = null;
+                        if (options && options.headers) {
+                            if (options.headers instanceof Headers) auth = options.headers.get('Authorization');
+                            else if (typeof options.headers === 'object') auth = options.headers['Authorization'] || options.headers['authorization'];
+                        }
+                        if (!auth && url && typeof url === 'object' && url.headers) {
+                            if (url.headers instanceof Headers) auth = url.headers.get('Authorization');
+                            else if (typeof url.headers === 'object') auth = url.headers['Authorization'] || url.headers['authorization'];
+                        }
+                        if (auth && auth.startsWith('Bearer ')) {
+                            const t = auth.substring(7).trim();
+                            if (isSpotifyToken(t) && !resolved) {
+                                resolved = true;
+                                clearTimeout(timeoutId);
+                                cleanup();
+                                resolve(t);
+                            }
+                        }
+                    }
+                } catch (err) {}
+                return originalFetch.apply(this, arguments);
+            };
+        });
+    };
+    
+    const token = await captureToken();
+    if (token) {
+        copy(token);
+        console.log("✅ Jeton d'accès extrait avec succès :", token);
+        alert("🎉 Jeton d'accès copié dans votre presse-papiers !\\n\\nVous pouvez maintenant le coller dans l'application.");
+    } else {
+        const manual = prompt("Jeton d'accès automatique introuvable (Bloqué par Spotify).\\n\\nPour le récupérer manuellement :\\n1. Ouvrez l'onglet Réseau (Network) de la console (F12).\\n2. Cherchez ou lancez une action (ex: recherche, clic play) pour voir des requêtes vers 'api.spotify.com'.\\n3. Cliquez sur une requête, allez dans l'onglet 'Headers' et faites défiler jusqu'à 'Request Headers'.\\n4. Copiez la valeur de l'en-tête 'Authorization' en retirant le mot 'Bearer '.\\n\\nCollez votre jeton d'accès Spotify ci-dessous :");
+        if (manual) {
+            copy(manual.trim());
+            alert("✅ Jeton copié dans le presse-papiers !");
+        }
+    }
+})();`;
     navigator.clipboard.writeText(script).then(() => {
         alert('Le script d\'extraction rapide a été copié dans votre presse-papiers !');
     }).catch(err => {
