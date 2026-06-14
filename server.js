@@ -230,6 +230,7 @@ app.get('/api/spotify/callback', async (req, res) => {
         config.spotifyAccessToken = response.data.access_token;
         config.spotifyRefreshToken = response.data.refresh_token;
         config.spotifyTokenExpires = Date.now() + (response.data.expires_in * 1000);
+        config.spotifyWebPlayerToken = ''; // Clear Web Player token on successful OAuth login
         saveConfig(config);
         
         // Redirect back to home dashboard
