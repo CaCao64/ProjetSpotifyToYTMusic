@@ -643,6 +643,243 @@ app.post('/api/ytmusic/copy-playlist', async (req, res) => {
     }
 });
 
+// API: Merge YouTube Music Playlists via Server-Sent Events (SSE)
+app.get('/api/ytmusic/merge-playlists-stream', async (req, res) => {
+    const { sourcePlaylistIds: sourceIdsStr, newPlaylistName, skipDuplicates: skipDupStr } = req.query;
+    
+    if (!sourceIdsStr || !newPlaylistName) {
+        return res.status(400).send('Missing sourcePlaylistIds or newPlaylistName parameters');
+    }
+    
+    const sourcePlaylistIds = sourceIdsStr.split(',');
+    const skipDuplicates = skipDupStr === 'true';
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    try {
+        sendEvent('info', { message: 'Création de la nouvelle playlist...' });
+        const createRes = await runPythonHelper({
+            action: 'create_playlist',
+            auth_path: YT_AUTH_PATH,
+            title: newPlaylistName,
+            description: 'Playlist fusionnée depuis plusieurs playlists YouTube Music'
+        });
+        const newPlaylistId = createRes.playlist_id;
+        sendEvent('info', { message: `Nouvelle playlist créée (ID: ${newPlaylistId})` });
+        
+        let allVideoIds = [];
+        const seenVideoIds = new Set();
+        
+        for (let idx = 0; idx < sourcePlaylistIds.length; idx++) {
+            const playlistId = sourcePlaylistIds[idx];
+            sendEvent('info', { message: `Lecture des titres de la playlist source ${idx + 1}/${sourcePlaylistIds.length}...` });
+            const tracksRes = await runPythonHelper({
+                action: 'get_playlist_tracks',
+                auth_path: YT_AUTH_PATH,
+                playlist_id: playlistId
+            });
+            const tracks = tracksRes.tracks || [];
+            
+            for (const t of tracks) {
+                if (t.videoId) {
+                    if (skipDuplicates) {
+                        if (!seenVideoIds.has(t.videoId)) {
+                            seenVideoIds.add(t.videoId);
+                            allVideoIds.push(t.videoId);
+                        }
+                    } else {
+                        allVideoIds.push(t.videoId);
+                    }
+                }
+            }
+        }
+        
+        sendEvent('info', { message: `Total de titres à ajouter : ${allVideoIds.length}. Préparation de l'ajout...` });
+        
+        let processedTracks = 0;
+        if (allVideoIds.length > 0) {
+            const batchSize = 100;
+            const batches = [];
+            for (let i = 0; i < allVideoIds.length; i += batchSize) {
+                batches.push(allVideoIds.slice(i, i + batchSize));
+            }
+            
+            for (let b = 0; b < batches.length; b++) {
+                const batch = batches[b];
+                const batchStartIndex = b * batchSize;
+                sendEvent('info', { message: `Ajout du lot ${b + 1}/${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                
+                await runPythonHelper({
+                    action: 'add_tracks',
+                    auth_path: YT_AUTH_PATH,
+                    playlist_id: newPlaylistId,
+                    video_ids: batch,
+                    duplicates: !skipDuplicates
+                });
+                
+                processedTracks += batch.length;
+                const progress = Math.min(100, Math.round((processedTracks / allVideoIds.length) * 100));
+                sendEvent('progress', {
+                    added: processedTracks,
+                    total: allVideoIds.length,
+                    percent: progress,
+                    message: `${processedTracks} sur ${allVideoIds.length} titres ajoutés.`
+                });
+                
+                if (b < batches.length - 1) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+        }
+        
+        sendEvent('success', { message: 'Fusion terminée avec succès !', playlistId: newPlaylistId, total: allVideoIds.length });
+    } catch (err) {
+        sendEvent('error', { error: err.message });
+    } finally {
+        res.end();
+    }
+});
+
+// API: Copy YTM Playlist via Server-Sent Events (SSE)
+app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
+    const { sourcePlaylistId, destPlaylistId, destPlaylistName, useSecondaryAccount: useSecStr, skipDuplicates: skipDupStr } = req.query;
+    
+    if (!sourcePlaylistId || !destPlaylistId) {
+        return res.status(400).send('Missing sourcePlaylistId or destPlaylistId parameters');
+    }
+    
+    const useSecondaryAccount = useSecStr === 'true';
+    const skipDuplicates = skipDupStr === 'true';
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    try {
+        const destAuthPath = useSecondaryAccount ? YT_AUTH_PATH_SECONDARY : YT_AUTH_PATH;
+        if (useSecondaryAccount && !fs.existsSync(YT_AUTH_PATH_SECONDARY)) {
+            throw new Error('Le compte YouTube Music secondaire n\'est pas configuré.');
+        }
+        
+        sendEvent('info', { message: 'Lecture des titres de la playlist source...' });
+        const tracksRes = await runPythonHelper({
+            action: 'get_playlist_tracks',
+            auth_path: YT_AUTH_PATH,
+            playlist_id: sourcePlaylistId
+        });
+        const tracks = tracksRes.tracks || [];
+        
+        if (tracks.length === 0) {
+            sendEvent('success', { message: 'La playlist source ne contient aucun titre.', playlistId: destPlaylistId, total: 0 });
+            return;
+        }
+        
+        let resolvedDestPlaylistId = destPlaylistId;
+        if (destPlaylistId === '__new__') {
+            sendEvent('info', { message: `Création de la nouvelle playlist de destination : "${destPlaylistName}"...` });
+            const title = destPlaylistName || 'YTM Copy Playlist';
+            const createRes = await runPythonHelper({
+                action: 'create_playlist',
+                auth_path: destAuthPath,
+                title: title,
+                description: 'Copie de playlist YouTube Music'
+            });
+            resolvedDestPlaylistId = createRes.playlist_id;
+            sendEvent('info', { message: `Nouvelle playlist créée (ID: ${resolvedDestPlaylistId})` });
+        }
+        
+        let existingVideoIds = new Set();
+        if (skipDuplicates && destPlaylistId !== '__new__') {
+            sendEvent('info', { message: 'Analyse des titres déjà existants dans la destination...' });
+            try {
+                const destTracksRes = await runPythonHelper({
+                    action: 'get_playlist_tracks',
+                    auth_path: destAuthPath,
+                    playlist_id: resolvedDestPlaylistId
+                });
+                const destTracks = destTracksRes.tracks || [];
+                destTracks.forEach(t => {
+                    if (t.videoId) existingVideoIds.add(t.videoId);
+                });
+                sendEvent('info', { message: `${existingVideoIds.size} titre(s) déjà présent(s) détecté(s).` });
+            } catch (err) {
+                sendEvent('info', { message: '⚠️ Impossible de lire les titres existants de la destination. On continue sans déduplication existante.' });
+            }
+        }
+        
+        let videoIdsToAdd = [];
+        const seenInBatch = new Set();
+        let duplicatesCount = 0;
+        
+        for (const t of tracks) {
+            if (t.videoId) {
+                const isDuplicate = skipDuplicates && (existingVideoIds.has(t.videoId) || seenInBatch.has(t.videoId));
+                if (!isDuplicate) {
+                    videoIdsToAdd.push(t.videoId);
+                    seenInBatch.add(t.videoId);
+                } else {
+                    duplicatesCount++;
+                }
+            }
+        }
+        
+        sendEvent('info', { message: `${videoIdsToAdd.length} titre(s) à copier (${duplicatesCount} doublon(s) ignoré(s)).` });
+        
+        let processedTracks = 0;
+        if (videoIdsToAdd.length > 0) {
+            const batchSize = 100;
+            const batches = [];
+            for (let i = 0; i < videoIdsToAdd.length; i += batchSize) {
+                batches.push(videoIdsToAdd.slice(i, i + batchSize));
+            }
+            
+            for (let b = 0; b < batches.length; b++) {
+                const batch = batches[b];
+                const batchStartIndex = b * batchSize;
+                sendEvent('info', { message: `Copie du lot ${b + 1}/${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                
+                await runPythonHelper({
+                    action: 'add_tracks',
+                    auth_path: destAuthPath,
+                    playlist_id: resolvedDestPlaylistId,
+                    video_ids: batch,
+                    duplicates: !skipDuplicates
+                });
+                
+                processedTracks += batch.length;
+                const progress = Math.min(100, Math.round((processedTracks / videoIdsToAdd.length) * 100));
+                sendEvent('progress', {
+                    added: processedTracks,
+                    total: videoIdsToAdd.length,
+                    percent: progress,
+                    duplicatesSkipped: duplicatesCount,
+                    message: `${processedTracks} sur ${videoIdsToAdd.length} titres copiés.`
+                });
+                
+                if (b < batches.length - 1) {
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+        }
+        
+        sendEvent('success', { message: 'Copie terminée avec succès !', playlistId: resolvedDestPlaylistId, total: videoIdsToAdd.length, duplicatesSkipped: duplicatesCount });
+    } catch (err) {
+        sendEvent('error', { error: err.message });
+    } finally {
+        res.end();
+    }
+});
+
 // API: Transfer tracks with progress updates via Server-Sent Events (SSE)
 app.get('/api/ytmusic/transfer-stream', async (req, res) => {
     const { playlistId, trackData, skipDuplicates } = req.query; // trackData is JSON string array of videoIds

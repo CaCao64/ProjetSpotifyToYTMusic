@@ -3540,8 +3540,9 @@ async function executeYtMerge() {
     const skipDuplicates = document.getElementById('yt-merge-skip-duplicates').checked;
     const progressCard = document.getElementById('yt-merge-progress-card');
     const consoleLog = document.getElementById('yt-merge-console-log');
+    const statusAlert = document.getElementById('yt-merge-status-alert');
     
-    if (!btn || !newNameInput || !progressCard || !consoleLog) return;
+    if (!btn || !newNameInput || !progressCard || !consoleLog || !statusAlert) return;
     
     const newPlaylistName = newNameInput.value.trim();
     if (!newPlaylistName) {
@@ -3559,53 +3560,141 @@ async function executeYtMerge() {
         return;
     }
     
+    // Reset indicators
     btn.setAttribute('disabled', 'true');
     btn.textContent = 'Fusion en cours...';
     progressCard.style.display = 'block';
     consoleLog.innerHTML = '';
+    statusAlert.style.display = 'none';
+    
+    document.getElementById('yt-merge-progress-counter').textContent = '0 / 0';
+    document.getElementById('yt-merge-progress-bar-fill').style.width = '0%';
+    document.getElementById('yt-merge-progress-percent').textContent = '0%';
+    document.getElementById('yt-merge-progress-eta').textContent = 'Calcul du temps restant...';
+    document.getElementById('yt-merge-stat-added').textContent = '0';
+    document.getElementById('yt-merge-stat-total').textContent = '0';
+    document.getElementById('yt-merge-stat-skipped').textContent = '0';
     
     const log = (msg, type = 'info') => {
         const entry = document.createElement('div');
         entry.className = `log-entry ${type}`;
-        entry.style.color = type === 'success' ? '#1db954' : (type === 'error' ? '#ef4444' : '#ffffff');
-        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        
+        let prefix = 'ℹ️ ';
+        let color = '#ffffff';
+        if (type === 'success') {
+            prefix = '✅ ';
+            color = '#1db954';
+        } else if (type === 'error') {
+            prefix = '❌ ';
+            color = '#ef4444';
+        } else if (type === 'warning') {
+            prefix = '⚠️ ';
+            color = '#eab308';
+        }
+        
+        entry.style.color = color;
+        entry.style.marginBottom = '0.35rem';
+        entry.style.lineHeight = '1.4';
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${prefix}${msg}`;
         consoleLog.appendChild(entry);
         consoleLog.scrollTop = consoleLog.scrollHeight;
     };
     
     log(`Lancement de la fusion de ${checkedPlaylists.length} playlists...`, 'info');
     
-    try {
-        const res = await fetch('/api/ytmusic/merge-playlists', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sourcePlaylistIds: checkedPlaylists,
-                newPlaylistName,
-                skipDuplicates
-            })
-        });
-        const data = await res.json();
+    const startTime = Date.now();
+    
+    // Start EventSource
+    const eventSourceUrl = `/api/ytmusic/merge-playlists-stream?sourcePlaylistIds=${checkedPlaylists.join(',')}&newPlaylistName=${encodeURIComponent(newPlaylistName)}&skipDuplicates=${skipDuplicates}`;
+    const source = new EventSource(eventSourceUrl);
+    
+    source.addEventListener('info', (event) => {
+        const data = JSON.parse(event.data);
+        log(data.message, 'info');
+    });
+    
+    source.addEventListener('progress', (event) => {
+        const data = JSON.parse(event.data);
+        document.getElementById('yt-merge-progress-counter').textContent = `${data.added} / ${data.total}`;
+        document.getElementById('yt-merge-progress-bar-fill').style.width = `${data.percent}%`;
+        document.getElementById('yt-merge-progress-percent').textContent = `${data.percent}%`;
+        document.getElementById('yt-merge-stat-added').textContent = data.added;
+        document.getElementById('yt-merge-stat-total').textContent = data.total;
         
-        if (data.success) {
-            log(`Fusion réussie ! Nouvelle playlist créée avec succès. ID: ${data.playlistId}`, 'success');
-            log(`${data.trackCount} titres ont été insérés dans la playlist.`, 'success');
-            alert('🎉 Fusion de playlists terminée avec succès !');
-            newNameInput.value = '';
-            document.querySelectorAll('.yt-merge-playlist-cb').forEach(cb => cb.checked = false);
-            await loadPlaylists();
-            populateMergePlaylistsList();
-        } else {
-            log(`Échec de la fusion : ${data.error || 'Erreur inconnue'}`, 'error');
-            alert('❌ Échec de la fusion de playlists.');
+        log(data.message, 'info');
+        
+        // Calculate ETA
+        if (data.added > 0) {
+            const elapsedMs = Date.now() - startTime;
+            const tracksPerMs = data.added / elapsedMs;
+            const remainingTracks = data.total - data.added;
+            const remainingMs = remainingTracks / tracksPerMs;
+            
+            if (remainingTracks <= 0) {
+                document.getElementById('yt-merge-progress-eta').textContent = 'Terminé';
+            } else {
+                const totalSeconds = Math.round(remainingMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                let etaText = 'Temps restant estimé : ';
+                if (minutes > 0) {
+                    etaText += `${minutes} min ${seconds} s`;
+                } else {
+                    etaText += `${seconds} s`;
+                }
+                document.getElementById('yt-merge-progress-eta').textContent = etaText;
+            }
         }
-    } catch (e) {
-        log(`Erreur de communication : ${e.message}`, 'error');
-        alert('❌ Erreur de communication.');
-    } finally {
+    });
+    
+    source.addEventListener('success', async (event) => {
+        const data = JSON.parse(event.data);
+        source.close();
+        
+        document.getElementById('yt-merge-progress-counter').textContent = `${data.total} / ${data.total}`;
+        document.getElementById('yt-merge-progress-bar-fill').style.width = '100%';
+        document.getElementById('yt-merge-progress-percent').textContent = '100%';
+        document.getElementById('yt-merge-progress-eta').textContent = 'Terminé';
+        document.getElementById('yt-merge-stat-added').textContent = data.total;
+        document.getElementById('yt-merge-stat-total').textContent = data.total;
+        
+        // Show success alert
+        statusAlert.style.display = 'flex';
+        statusAlert.style.background = 'rgba(29, 185, 84, 0.15)';
+        statusAlert.style.border = '1px solid #1db954';
+        statusAlert.style.color = '#1db954';
+        statusAlert.innerHTML = `<span>🎉 <strong>Opération terminée avec succès !</strong> La fusion des playlists est complétée. Nouvelle playlist créée avec ${data.total} titres.</span>`;
+        
+        log(`Fusion réussie ! Nouvelle playlist créée avec succès. ID: ${data.playlistId}`, 'success');
+        log(`${data.total} titres ont été insérés dans la playlist.`, 'success');
+        
+        newNameInput.value = '';
+        document.querySelectorAll('.yt-merge-playlist-cb').forEach(cb => cb.checked = false);
+        
+        // Unlock
         btn.removeAttribute('disabled');
         btn.textContent = '🔗 Lancer la fusion';
-    }
+        
+        // Reload library playlists dropdowns
+        await loadPlaylists();
+        populateMergePlaylistsList();
+    });
+    
+    source.addEventListener('error', (event) => {
+        const data = event.data ? JSON.parse(event.data) : { error: 'Erreur de connexion SSE' };
+        source.close();
+        
+        statusAlert.style.display = 'flex';
+        statusAlert.style.background = 'rgba(239, 68, 68, 0.15)';
+        statusAlert.style.border = '1px solid #ef4444';
+        statusAlert.style.color = '#ef4444';
+        statusAlert.innerHTML = `<span>❌ <strong>Erreur :</strong> ${data.error}</span>`;
+        
+        log(`Échec de la fusion : ${data.error}`, 'error');
+        
+        btn.removeAttribute('disabled');
+        btn.textContent = '🔗 Lancer la fusion';
+    });
 }
 
 async function executeYtCopy() {
@@ -3617,8 +3706,9 @@ async function executeYtCopy() {
     const skipDuplicates = document.getElementById('yt-copy-skip-duplicates').checked;
     const progressCard = document.getElementById('yt-copy-progress-card');
     const consoleLog = document.getElementById('yt-copy-console-log');
+    const statusAlert = document.getElementById('yt-copy-status-alert');
     
-    if (!btn || !sourceSelect || !destSelect || !newNameInput || !progressCard || !consoleLog) return;
+    if (!btn || !sourceSelect || !destSelect || !newNameInput || !progressCard || !consoleLog || !statusAlert) return;
     
     const sourcePlaylistId = sourceSelect.value;
     if (!sourcePlaylistId) {
@@ -3633,16 +3723,42 @@ async function executeYtCopy() {
         return;
     }
     
+    // Reset indicators
     btn.setAttribute('disabled', 'true');
     btn.textContent = 'Copie en cours...';
     progressCard.style.display = 'block';
     consoleLog.innerHTML = '';
+    statusAlert.style.display = 'none';
+    
+    document.getElementById('yt-copy-progress-counter').textContent = '0 / 0';
+    document.getElementById('yt-copy-progress-bar-fill').style.width = '0%';
+    document.getElementById('yt-copy-progress-percent').textContent = '0%';
+    document.getElementById('yt-copy-progress-eta').textContent = 'Calcul du temps restant...';
+    document.getElementById('yt-copy-stat-added').textContent = '0';
+    document.getElementById('yt-copy-stat-total').textContent = '0';
+    document.getElementById('yt-copy-stat-skipped').textContent = '0';
     
     const log = (msg, type = 'info') => {
         const entry = document.createElement('div');
         entry.className = `log-entry ${type}`;
-        entry.style.color = type === 'success' ? '#1db954' : (type === 'error' ? '#ef4444' : '#ffffff');
-        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        
+        let prefix = 'ℹ️ ';
+        let color = '#ffffff';
+        if (type === 'success') {
+            prefix = '✅ ';
+            color = '#1db954';
+        } else if (type === 'error') {
+            prefix = '❌ ';
+            color = '#ef4444';
+        } else if (type === 'warning') {
+            prefix = '⚠️ ';
+            color = '#eab308';
+        }
+        
+        entry.style.color = color;
+        entry.style.marginBottom = '0.35rem';
+        entry.style.lineHeight = '1.4';
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${prefix}${msg}`;
         consoleLog.appendChild(entry);
         consoleLog.scrollTop = consoleLog.scrollHeight;
     };
@@ -3654,37 +3770,101 @@ async function executeYtCopy() {
         log(`Destination : Même compte YouTube Music.`, 'info');
     }
     
-    try {
-        const res = await fetch('/api/ytmusic/copy-playlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sourcePlaylistId,
-                destPlaylistId,
-                destPlaylistName,
-                useSecondaryAccount: useSecondary,
-                skipDuplicates
-            })
-        });
-        const data = await res.json();
+    const startTime = Date.now();
+    
+    // Start EventSource
+    const eventSourceUrl = `/api/ytmusic/copy-playlist-stream?sourcePlaylistId=${sourcePlaylistId}&destPlaylistId=${destPlaylistId}&destPlaylistName=${encodeURIComponent(destPlaylistName)}&useSecondaryAccount=${useSecondary}&skipDuplicates=${skipDuplicates}`;
+    const source = new EventSource(eventSourceUrl);
+    
+    source.addEventListener('info', (event) => {
+        const data = JSON.parse(event.data);
+        log(data.message, 'info');
+    });
+    
+    source.addEventListener('progress', (event) => {
+        const data = JSON.parse(event.data);
+        document.getElementById('yt-copy-progress-counter').textContent = `${data.added} / ${data.total}`;
+        document.getElementById('yt-copy-progress-bar-fill').style.width = `${data.percent}%`;
+        document.getElementById('yt-copy-progress-percent').textContent = `${data.percent}%`;
+        document.getElementById('yt-copy-stat-added').textContent = data.added;
+        document.getElementById('yt-copy-stat-total').textContent = data.total;
+        document.getElementById('yt-copy-stat-skipped').textContent = data.duplicatesSkipped || 0;
         
-        if (data.success) {
-            log(`Copie réussie ! ID Playlist destination : ${data.playlistId}`, 'success');
-            log(`${data.trackCount} titres copiés dans l'ordre original.`, 'success');
-            alert('🎉 Copie de playlist terminée avec succès !');
-            newNameInput.value = '';
-            await loadPlaylists();
-            populateCopyPlaylistsDropdown();
-        } else {
-            log(`Échec de la copie : ${data.error || 'Erreur inconnue'}`, 'error');
-            alert('❌ Échec de la copie de la playlist.');
+        log(data.message, 'info');
+        
+        // Calculate ETA
+        if (data.added > 0) {
+            const elapsedMs = Date.now() - startTime;
+            const tracksPerMs = data.added / elapsedMs;
+            const remainingTracks = data.total - data.added;
+            const remainingMs = remainingTracks / tracksPerMs;
+            
+            if (remainingTracks <= 0) {
+                document.getElementById('yt-copy-progress-eta').textContent = 'Terminé';
+            } else {
+                const totalSeconds = Math.round(remainingMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                let etaText = 'Temps restant estimé : ';
+                if (minutes > 0) {
+                    etaText += `${minutes} min ${seconds} s`;
+                } else {
+                    etaText += `${seconds} s`;
+                }
+                document.getElementById('yt-copy-progress-eta').textContent = etaText;
+            }
         }
-    } catch (e) {
-        log(`Erreur de communication : ${e.message}`, 'error');
-        alert('❌ Erreur de communication.');
-    } finally {
+    });
+    
+    source.addEventListener('success', async (event) => {
+        const data = JSON.parse(event.data);
+        source.close();
+        
+        document.getElementById('yt-copy-progress-counter').textContent = `${data.total} / ${data.total}`;
+        document.getElementById('yt-copy-progress-bar-fill').style.width = '100%';
+        document.getElementById('yt-copy-progress-percent').textContent = '100%';
+        document.getElementById('yt-copy-progress-eta').textContent = 'Terminé';
+        document.getElementById('yt-copy-stat-added').textContent = data.total;
+        document.getElementById('yt-copy-stat-total').textContent = data.total;
+        document.getElementById('yt-copy-stat-skipped').textContent = data.duplicatesSkipped || 0;
+        
+        // Show success alert
+        statusAlert.style.display = 'flex';
+        statusAlert.style.background = 'rgba(29, 185, 84, 0.15)';
+        statusAlert.style.border = '1px solid #1db954';
+        statusAlert.style.color = '#1db954';
+        statusAlert.innerHTML = `<span>🎉 <strong>Opération terminée avec succès !</strong> La playlist a été copiée avec ${data.total} titres (et ${data.duplicatesSkipped || 0} doublons ignorés).</span>`;
+        
+        log(`Copie réussie ! ID Playlist destination : ${data.playlistId}`, 'success');
+        log(`${data.total} titres copiés dans l'ordre original.`, 'success');
+        
+        newNameInput.value = '';
+        
+        // Unlock
         btn.removeAttribute('disabled');
         btn.textContent = '📋 Lancer la copie dans l\'ordre';
-    }
+        
+        // Reload playlists dropdowns
+        await loadPlaylists();
+        populateCopyPlaylistsDropdown();
+    });
+    
+    source.addEventListener('error', (event) => {
+        const data = event.data ? JSON.parse(event.data) : { error: 'Erreur de connexion SSE' };
+        source.close();
+        
+        statusAlert.style.display = 'flex';
+        statusAlert.style.background = 'rgba(239, 68, 68, 0.15)';
+        statusAlert.style.border = '1px solid #ef4444';
+        statusAlert.style.color = '#ef4444';
+        statusAlert.innerHTML = `<span>❌ <strong>Erreur :</strong> ${data.error}</span>`;
+        
+        log(`Échec de la copie : ${data.error}`, 'error');
+        
+        btn.removeAttribute('disabled');
+        btn.textContent = '📋 Lancer la copie dans l\'ordre';
+    });
 }
+
+
 
