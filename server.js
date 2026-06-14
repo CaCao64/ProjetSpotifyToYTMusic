@@ -89,7 +89,25 @@ async function getSpotifyToken() {
     const now = Date.now();
     if (!config.spotifyAccessToken || (config.spotifyTokenExpires && now >= config.spotifyTokenExpires - 60000)) {
         if (!config.spotifyRefreshToken) {
-            throw new Error('Spotify not authorized. Please log in.');
+            // Fallback to client_credentials flow if user is not authorized via OAuth
+            const authHeader = Buffer.from(`${config.spotifyClientId}:${config.spotifyClientSecret}`).toString('base64');
+            try {
+                const response = await axios.post('https://accounts.spotify.com/api/token', 
+                    new URLSearchParams({
+                        grant_type: 'client_credentials'
+                    }), {
+                    headers: {
+                        'Authorization': `Basic ${authHeader}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                });
+                config.spotifyAccessToken = response.data.access_token;
+                config.spotifyTokenExpires = Date.now() + (response.data.expires_in * 1000);
+                saveConfig(config);
+                return config.spotifyAccessToken;
+            } catch (error) {
+                throw new Error('Failed to get Client Credentials token: ' + (error.response?.data?.error_description || error.message));
+            }
         }
         
         // Refresh token
@@ -774,7 +792,27 @@ app.post('/api/spotify/search-track', async (req, res) => {
         const token = await getSpotifyToken();
         const query = `${track.title} ${track.artist}`;
         
-        const response = await axios.get('https://api.spotify.com/v1/search', {
+        const axiosGetWithRetry = async (url, configOpts, retries = 5) => {
+            let delay = 2000;
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    return await axios.get(url, configOpts);
+                } catch (error) {
+                    if (error.response && error.response.status === 429) {
+                        const retryAfter = error.response.headers['retry-after'] || error.response.headers['Retry-After'];
+                        const waitTime = retryAfter ? (parseInt(retryAfter) + 1) * 1000 : delay;
+                        console.warn(`⏳ [Rate Limit Backend] Pause de ${Math.round(waitTime/1000)}s...`);
+                        await new Promise(r => setTimeout(r, waitTime));
+                        delay *= 2;
+                        continue;
+                    }
+                    throw error;
+                }
+            }
+            return await axios.get(url, configOpts);
+        };
+
+        const response = await axiosGetWithRetry('https://api.spotify.com/v1/search', {
             params: {
                 q: query,
                 type: 'track',

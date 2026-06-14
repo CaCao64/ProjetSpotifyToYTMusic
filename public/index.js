@@ -213,6 +213,11 @@ function setupEventListeners() {
         btnYtExportJson.addEventListener('click', exportYtMatchesJSON);
     }
     
+    const btnYtCopyUris = document.getElementById('btn-yt-copy-uris');
+    if (btnYtCopyUris) {
+        btnYtCopyUris.addEventListener('click', copyYtMatchedUris);
+    }
+    
     const btnImportResults = document.getElementById('btn-import-results');
     if (btnImportResults && fileInput) {
         btnImportResults.addEventListener('click', () => fileInput.click());
@@ -2095,15 +2100,16 @@ function toggleYtSpotifyBlockedState(blocked) {
     const transferSettings = document.querySelector('.transfer-settings');
     const warningBanner = document.getElementById('yt-premium-warning-banner');
     
+    // Always keep the dashboard matcher button visible
+    if (btnMatch) btnMatch.style.display = 'inline-block';
+    
     if (blocked) {
         if (select) select.style.display = 'none';
-        if (btnMatch) btnMatch.style.display = 'none';
         if (btnCopyDirect) btnCopyDirect.style.display = 'inline-block';
         if (transferSettings) transferSettings.style.display = 'none';
         if (warningBanner) warningBanner.style.display = 'block';
     } else {
         if (select) select.style.display = 'inline-block';
-        if (btnMatch) btnMatch.style.display = 'inline-block';
         if (btnCopyDirect) btnCopyDirect.style.display = 'none';
         if (transferSettings) transferSettings.style.display = 'flex';
         if (warningBanner) warningBanner.style.display = 'none';
@@ -2933,6 +2939,36 @@ function exportYtMatchesJSON() {
     a.href = URL.createObjectURL(blob);
     a.download = "ytmusic_spotify_matches.json";
     a.click();
+}
+
+function copyYtMatchedUris() {
+    if (ytState.tracks.length === 0) {
+        alert("Aucun titre chargé.");
+        return;
+    }
+    
+    const matchedUris = [];
+    ytState.tracks.forEach(t => {
+        const match = ytState.matches[t.videoId];
+        if (match) {
+            const id = match.manual ? match.videoId : match.bestMatch?.videoId;
+            if (id) {
+                matchedUris.push(`spotify:track:${id}`);
+            }
+        }
+    });
+    
+    if (matchedUris.length === 0) {
+        alert("Aucun titre n'a été matché avec succès pour le moment. Veuillez lancer la recherche (Matcher) d'abord.");
+        return;
+    }
+    
+    const text = matchedUris.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        alert(`🎉 ${matchedUris.length} URIs Spotify ont été copiées dans le presse-papiers !\n\nOuvrez votre application Spotify Desktop, allez sur votre playlist, et appuyez sur Ctrl+V (ou Cmd+V) pour ajouter les titres d'un coup sans aucune API !`);
+    }).catch(err => {
+        alert("Échec de la copie automatique : " + err.message);
+    });
 }
 
 function handleYtFileImport(e) {
