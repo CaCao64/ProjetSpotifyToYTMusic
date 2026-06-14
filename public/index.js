@@ -1593,6 +1593,10 @@ function getDirectTransferScript(tracks, playlistName) {
         });
         
         if (!createRes.ok) {
+            if (createRes.status === 401) {
+                alert("❌ Votre jeton d'accès Spotify a expiré ou est invalide. Veuillez rafraîchir la page Spotify Web Player et relancer le script.");
+                return;
+            }
             const errText = await createRes.text();
             alert("Impossible de créer la playlist : " + createRes.status + " " + errText);
             return;
@@ -1683,6 +1687,10 @@ function getDirectTransferScript(tracks, playlistName) {
             const searchRes = await fetchWithRetry("https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5", {
                 headers: { 'Authorization': 'Bearer ' + token }
             });
+            if (searchRes.status === 401) {
+                alert("❌ Votre jeton d'accès Spotify a expiré ou est invalide. Veuillez rafraîchir la page Spotify Web Player et relancer le script.");
+                return;
+            }
             const searchData = await searchRes.json();
             const candidates = searchData.tracks?.items || [];
             
@@ -1737,7 +1745,13 @@ function getDirectTransferScript(tracks, playlistName) {
                     },
                     body: JSON.stringify({ ids: batch })
                 });
-                if (!addRes.ok) throw new Error(await addRes.text());
+                if (!addRes.ok) {
+                    if (addRes.status === 401) {
+                        alert("❌ Votre jeton d'accès Spotify a expiré ou est invalide. Veuillez rafraîchir la page Spotify Web Player et relancer le script.");
+                        return;
+                    }
+                    throw new Error(await addRes.text());
+                }
             } else {
                 const uris = batch.map(id => 'spotify:track:' + id);
                 const addRes = await fetchWithRetry("https://api.spotify.com/v1/playlists/" + playlistId + "/tracks", {
@@ -1748,7 +1762,13 @@ function getDirectTransferScript(tracks, playlistName) {
                     },
                     body: JSON.stringify({ uris: uris })
                 });
-                if (!addRes.ok) throw new Error(await addRes.text());
+                if (!addRes.ok) {
+                    if (addRes.status === 401) {
+                        alert("❌ Votre jeton d'accès Spotify a expiré ou est invalide. Veuillez rafraîchir la page Spotify Web Player et relancer le script.");
+                        return;
+                    }
+                    throw new Error(await addRes.text());
+                }
             }
             addedCount += batch.length;
             console.log("   ✅ Lot " + (b+1) + " ajouté.");
