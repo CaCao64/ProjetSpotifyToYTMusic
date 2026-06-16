@@ -166,15 +166,21 @@ async function getOrFetchYtAccount(force = false) {
         ytAccountCached = null;
         return null;
     }
+    if (force) {
+        ytAccountCached = null;
+    }
     if (ytAccountCached && !force) return ytAccountCached;
     try {
         const res = await runPythonHelper({
             action: 'get_account_info',
             auth_path: YT_AUTH_PATH
         });
+        console.log("getOrFetchYtAccount resolved to:", JSON.stringify(res));
         ytAccountCached = res;
         return res;
     } catch (e) {
+        console.error("Error in getOrFetchYtAccount:", e.message);
+        ytAccountCached = null;
         return null;
     }
 }
@@ -184,15 +190,21 @@ async function getOrFetchYtSecondaryAccount(force = false) {
         ytSecondaryAccountCached = null;
         return null;
     }
+    if (force) {
+        ytSecondaryAccountCached = null;
+    }
     if (ytSecondaryAccountCached && !force) return ytSecondaryAccountCached;
     try {
         const res = await runPythonHelper({
             action: 'get_account_info',
             auth_path: YT_AUTH_PATH_SECONDARY
         });
+        console.log("getOrFetchYtSecondaryAccount resolved to:", JSON.stringify(res));
         ytSecondaryAccountCached = res;
         return res;
     } catch (e) {
+        console.error("Error in getOrFetchYtSecondaryAccount:", e.message);
+        ytSecondaryAccountCached = null;
         return null;
     }
 }
@@ -222,6 +234,173 @@ async function getOrFetchSpotifyAccount(force = false) {
     }
 }
 
+// Ensure profiles directory exists
+const PROFILES_DIR = path.join(__dirname, 'data', 'profiles');
+if (!fs.existsSync(PROFILES_DIR)) {
+    fs.mkdirSync(PROFILES_DIR, { recursive: true });
+}
+
+async function initializeProfiles() {
+    try {
+        const config = loadConfig();
+        // If config.ytProfiles is empty or doesn't exist, and browser.json exists, we can import them.
+        if (!config.ytProfiles || config.ytProfiles.length === 0) {
+            config.ytProfiles = [];
+            
+            // Check primary account
+            if (fs.existsSync(YT_AUTH_PATH)) {
+                console.log("Importation automatique du profil principal existant...");
+                try {
+                    const info = await runPythonHelper({
+                        action: 'get_account_info',
+                        auth_path: YT_AUTH_PATH
+                    });
+                    if (info && info.success) {
+                        const accountName = info.accountName || 'Compte Principal';
+                        const channelHandle = info.channelHandle || '';
+                        const accountPhotoUrl = info.accountPhotoUrl || '';
+                        const cleanHandle = channelHandle ? channelHandle.replace(/[^a-zA-Z0-9_\-]/g, '') : '';
+                        const id = cleanHandle ? `handle_${cleanHandle}` : `id_primary_${Date.now()}`;
+                        const filename = `profile_${id}.json`;
+                        const profilePath = path.join(PROFILES_DIR, filename);
+                        
+                        // Copy active browser.json to profiles directory
+                        fs.copyFileSync(YT_AUTH_PATH, profilePath);
+                        
+                        const profileData = {
+                            id,
+                            accountName,
+                            channelHandle,
+                            accountPhotoUrl,
+                            filename
+                        };
+                        config.ytProfiles.push(profileData);
+                        config.activePrimaryProfileId = id;
+                        console.log(`Profil principal importé : ${accountName}`);
+                    }
+                } catch (e) {
+                    console.error("Erreur lors de l'import du compte principal existant:", e.message);
+                }
+            }
+            
+            // Check secondary account
+            if (fs.existsSync(YT_AUTH_PATH_SECONDARY)) {
+                console.log("Importation automatique du profil secondaire existant...");
+                try {
+                    const info = await runPythonHelper({
+                        action: 'get_account_info',
+                        auth_path: YT_AUTH_PATH_SECONDARY
+                    });
+                    if (info && info.success) {
+                        const accountName = info.accountName || 'Compte Secondaire';
+                        const channelHandle = info.channelHandle || '';
+                        const accountPhotoUrl = info.accountPhotoUrl || '';
+                        const cleanHandle = channelHandle ? channelHandle.replace(/[^a-zA-Z0-9_\-]/g, '') : '';
+                        
+                        // Avoid ID collision if it's the same account
+                        let id = cleanHandle ? `handle_${cleanHandle}` : `id_secondary_${Date.now()}`;
+                        const filename = `profile_${id}.json`;
+                        const profilePath = path.join(PROFILES_DIR, filename);
+                        
+                        // If it's the same handle, we don't need a duplicate file, we can reuse
+                        const existingProfile = config.ytProfiles.find(p => p.id === id);
+                        if (existingProfile) {
+                            config.activeSecondaryProfileId = id;
+                            console.log(`Profil secondaire réutilisé depuis le profil principal : ${accountName}`);
+                        } else {
+                            fs.copyFileSync(YT_AUTH_PATH_SECONDARY, profilePath);
+                            const profileData = {
+                                id,
+                                accountName,
+                                channelHandle,
+                                accountPhotoUrl,
+                                filename
+                            };
+                            config.ytProfiles.push(profileData);
+                            config.activeSecondaryProfileId = id;
+                            console.log(`Profil secondaire importé : ${accountName}`);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erreur lors de l'import du compte secondaire existant:", e.message);
+                }
+            }
+            
+            saveConfig(config);
+        }
+    } catch (err) {
+        console.error("Erreur lors de l'initialisation des profils :", err);
+    }
+}
+
+async function saveYtProfile(headersRaw, activePath) {
+    const tempPath = path.join(__dirname, 'data', 'temp_setup.json');
+    
+    // Write headers temporarily to run validation
+    await runPythonHelper({
+        action: 'setup_auth',
+        headers_raw: headersRaw,
+        filepath: tempPath
+    });
+    
+    // Validate by fetching account info
+    const info = await runPythonHelper({
+        action: 'get_account_info',
+        auth_path: tempPath
+    });
+    
+    if (!info || !info.success) {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        throw new Error(info?.error || "Impossible de valider le compte YouTube Music. En-têtes invalides.");
+    }
+    
+    const accountName = info.accountName || 'Compte Inconnu';
+    const channelHandle = info.channelHandle || '';
+    const accountPhotoUrl = info.accountPhotoUrl || '';
+    
+    // Generate profile id
+    const cleanHandle = channelHandle ? channelHandle.replace(/[^a-zA-Z0-9_\-]/g, '') : '';
+    const id = cleanHandle ? `handle_${cleanHandle}` : `id_${Date.now()}`;
+    const filename = `profile_${id}.json`;
+    const profilePath = path.join(PROFILES_DIR, filename);
+    
+    // Move temp file to profile path
+    fs.copyFileSync(tempPath, profilePath);
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    
+    // Update config
+    const config = loadConfig();
+    if (!config.ytProfiles) config.ytProfiles = [];
+    
+    const existingIndex = config.ytProfiles.findIndex(p => p.id === id);
+    const profileData = {
+        id,
+        accountName,
+        channelHandle,
+        accountPhotoUrl,
+        filename
+    };
+    
+    if (existingIndex > -1) {
+        config.ytProfiles[existingIndex] = profileData;
+    } else {
+        config.ytProfiles.push(profileData);
+    }
+    
+    if (activePath === YT_AUTH_PATH) {
+        config.activePrimaryProfileId = id;
+    } else if (activePath === YT_AUTH_PATH_SECONDARY) {
+        config.activeSecondaryProfileId = id;
+    }
+    
+    saveConfig(config);
+    
+    // Copy to active path
+    fs.copyFileSync(profilePath, activePath);
+    
+    return profileData;
+}
+
 // API: Get App Status and Config
 app.get('/api/status', async (req, res) => {
     const config = loadConfig();
@@ -249,6 +428,102 @@ app.get('/api/status', async (req, res) => {
     });
 });
 
+// API: Get Saved YTM Profiles
+app.get('/api/ytmusic/profiles', (req, res) => {
+    const config = loadConfig();
+    res.json({
+        success: true,
+        profiles: config.ytProfiles || [],
+        activePrimaryId: config.activePrimaryProfileId || null,
+        activeSecondaryId: config.activeSecondaryProfileId || null
+    });
+});
+
+// API: Select YTM Profile
+app.post('/api/ytmusic/profiles/select', async (req, res) => {
+    const { profileId, target } = req.body;
+    if (!profileId || !target || (target !== 'primary' && target !== 'secondary')) {
+        return res.status(400).json({ success: false, error: 'profileId and valid target (primary/secondary) are required.' });
+    }
+    
+    const config = loadConfig();
+    const profiles = config.ytProfiles || [];
+    const profile = profiles.find(p => p.id === profileId);
+    
+    if (!profile) {
+        return res.status(404).json({ success: false, error: 'Profil introuvable.' });
+    }
+    
+    const profilePath = path.join(PROFILES_DIR, profile.filename);
+    if (!fs.existsSync(profilePath)) {
+        return res.status(404).json({ success: false, error: 'Fichier de profil introuvable sur le disque.' });
+    }
+    
+    try {
+        if (target === 'primary') {
+            fs.copyFileSync(profilePath, YT_AUTH_PATH);
+            config.activePrimaryProfileId = profileId;
+            saveConfig(config);
+            await getOrFetchYtAccount(true);
+        } else {
+            fs.copyFileSync(profilePath, YT_AUTH_PATH_SECONDARY);
+            config.activeSecondaryProfileId = profileId;
+            saveConfig(config);
+            await getOrFetchYtSecondaryAccount(true);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// API: Delete YTM Profile
+app.delete('/api/ytmusic/profiles/:id', (req, res) => {
+    const profileId = req.params.id;
+    if (!profileId) {
+        return res.status(400).json({ success: false, error: 'profileId is required.' });
+    }
+    
+    const config = loadConfig();
+    const profiles = config.ytProfiles || [];
+    const profileIndex = profiles.findIndex(p => p.id === profileId);
+    
+    if (profileIndex === -1) {
+        return res.status(404).json({ success: false, error: 'Profil introuvable.' });
+    }
+    
+    const profile = profiles[profileIndex];
+    const profilePath = path.join(PROFILES_DIR, profile.filename);
+    
+    try {
+        if (fs.existsSync(profilePath)) {
+            fs.unlinkSync(profilePath);
+        }
+        
+        // Remove from list
+        profiles.splice(profileIndex, 1);
+        
+        // Reset active fields if deleted
+        if (config.activePrimaryProfileId === profileId) {
+            config.activePrimaryProfileId = null;
+            if (fs.existsSync(YT_AUTH_PATH)) fs.unlinkSync(YT_AUTH_PATH);
+            ytAccountCached = null;
+        }
+        if (config.activeSecondaryProfileId === profileId) {
+            config.activeSecondaryProfileId = null;
+            if (fs.existsSync(YT_AUTH_PATH_SECONDARY)) fs.unlinkSync(YT_AUTH_PATH_SECONDARY);
+            ytSecondaryAccountCached = null;
+        }
+        
+        config.ytProfiles = profiles;
+        saveConfig(config);
+        
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // API: Save Credentials
 app.post('/api/config', async (req, res) => {
     const { spotifyClientId, spotifyClientSecret, ytHeaders, ytHeadersSecondary, spotifyWebPlayerToken } = req.body;
@@ -262,19 +537,11 @@ app.post('/api/config', async (req, res) => {
     
     try {
         if (ytHeaders && ytHeaders.trim()) {
-            await runPythonHelper({
-                action: 'setup_auth',
-                headers_raw: ytHeaders,
-                filepath: YT_AUTH_PATH
-            });
+            await saveYtProfile(ytHeaders, YT_AUTH_PATH);
             await getOrFetchYtAccount(true);
         }
         if (ytHeadersSecondary && ytHeadersSecondary.trim()) {
-            await runPythonHelper({
-                action: 'setup_auth',
-                headers_raw: ytHeadersSecondary,
-                filepath: YT_AUTH_PATH_SECONDARY
-            });
+            await saveYtProfile(ytHeadersSecondary, YT_AUTH_PATH_SECONDARY);
             await getOrFetchYtSecondaryAccount(true);
         }
         if (spotifyWebPlayerToken !== undefined) {
@@ -1466,6 +1733,9 @@ app.get('/api/spotify/transfer-stream', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on http://127.0.0.1:${PORT}`);
+    // Initialize profiles from existing files if config has none
+    initializeProfiles().catch(err => console.error("Profile auto-import error:", err));
+    
     // Open application in default web browser
     open(`http://127.0.0.1:${PORT}`).catch(err => {
         console.log(`Failed to auto-open browser: ${err.message}`);

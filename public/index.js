@@ -336,6 +336,33 @@ function setupEventListeners() {
             await saveWebToken(token);
         });
     }
+    
+    // YTM Profiles events
+    const primaryProfileSelect = document.getElementById('yt-primary-profile-select');
+    const secondaryProfileSelect = document.getElementById('yt-secondary-profile-select');
+    const btnDeletePrimaryProfile = document.getElementById('btn-delete-primary-profile');
+    const btnDeleteSecondaryProfile = document.getElementById('btn-delete-secondary-profile');
+    
+    if (primaryProfileSelect) {
+        primaryProfileSelect.addEventListener('change', () => {
+            selectYtProfile(primaryProfileSelect.value, 'primary');
+        });
+    }
+    if (secondaryProfileSelect) {
+        secondaryProfileSelect.addEventListener('change', () => {
+            selectYtProfile(secondaryProfileSelect.value, 'secondary');
+        });
+    }
+    if (btnDeletePrimaryProfile && primaryProfileSelect) {
+        btnDeletePrimaryProfile.addEventListener('click', () => {
+            deleteYtProfile(primaryProfileSelect.value);
+        });
+    }
+    if (btnDeleteSecondaryProfile && secondaryProfileSelect) {
+        btnDeleteSecondaryProfile.addEventListener('click', () => {
+            deleteYtProfile(secondaryProfileSelect.value);
+        });
+    }
 }
 
 // Check configuration status
@@ -496,6 +523,8 @@ async function checkStatus() {
         } else {
             el.transferDashboard.style.display = 'none';
         }
+        
+        loadYtProfiles().catch(e => console.error("Error loading profiles:", e));
     } catch (e) {
         console.error('Failed to fetch status:', e);
     }
@@ -4043,6 +4072,99 @@ async function executeYtCopy() {
         btn.removeAttribute('disabled');
         btn.textContent = '📋 Lancer la copie dans l\'ordre';
     });
+}
+
+// ==========================================
+// YOUTUBE MUSIC PROFILES MANAGEMENT
+// ==========================================
+
+async function loadYtProfiles() {
+    const primarySelect = document.getElementById('yt-primary-profile-select');
+    const secondarySelect = document.getElementById('yt-secondary-profile-select');
+    const primaryContainer = document.getElementById('yt-primary-profile-container');
+    const secondaryContainer = document.getElementById('yt-secondary-profile-container');
+    
+    if (!primarySelect || !secondarySelect || !primaryContainer || !secondaryContainer) return;
+    
+    try {
+        const res = await fetch('/api/ytmusic/profiles');
+        const data = await res.json();
+        if (data.success && data.profiles) {
+            const profiles = data.profiles;
+            
+            if (profiles.length > 0) {
+                primaryContainer.style.display = 'flex';
+                secondaryContainer.style.display = 'flex';
+                
+                let html = '<option value="">-- Sélectionner un profil --</option>';
+                profiles.forEach(p => {
+                    const label = `${p.accountName} (${p.channelHandle || 'Compte'})`;
+                    html += `<option value="${p.id}">${label}</option>`;
+                });
+                
+                primarySelect.innerHTML = html;
+                secondarySelect.innerHTML = html;
+                
+                primarySelect.value = data.activePrimaryId || '';
+                secondarySelect.value = data.activeSecondaryId || '';
+            } else {
+                primaryContainer.style.display = 'none';
+                secondaryContainer.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load YTM profiles:', e);
+    }
+}
+
+async function selectYtProfile(profileId, target) {
+    if (!profileId) return;
+    try {
+        const res = await fetch('/api/ytmusic/profiles/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profileId, target })
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (target === 'primary') {
+                await checkStatus();
+                await loadYtProfiles();
+            } else {
+                await checkSecondaryAccountStatus();
+                await loadYtProfiles();
+                const checkboxOtherAccount = document.getElementById('yt-copy-use-other-account');
+                if (checkboxOtherAccount && checkboxOtherAccount.checked) {
+                    await populateCopyPlaylistsDropdownDestSecondary();
+                }
+            }
+        } else {
+            alert('Erreur lors de la sélection du profil : ' + (data.error || 'Erreur inconnue'));
+        }
+    } catch (e) {
+        alert('Erreur de communication : ' + e.message);
+    }
+}
+
+async function deleteYtProfile(profileId) {
+    if (!profileId) return;
+    if (!confirm('Voulez-vous vraiment supprimer ce profil YouTube Music ? Ses en-têtes de connexion seront définitivement effacés.')) return;
+    try {
+        const res = await fetch(`/api/ytmusic/profiles/${profileId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert('Profil supprimé avec succès !');
+            await loadYtProfiles();
+            await checkStatus();
+            await checkSecondaryAccountStatus();
+        } else {
+            alert('Erreur lors de la suppression : ' + (data.error || 'Erreur inconnue'));
+        }
+    } catch (e) {
+        alert('Erreur de communication : ' + e.message);
+    }
 }
 
 

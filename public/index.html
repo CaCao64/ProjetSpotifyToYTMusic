@@ -290,6 +290,14 @@
                     <img id="yt-account-photo" src="" style="width: 28px; height: 28px; border-radius: 50%; display: none; border: 1px solid rgba(255, 255, 255, 0.15);">
                     <span id="yt-account-info-text"></span>
                 </div>
+                
+                <div id="yt-primary-profile-container" style="display: none; margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); padding: 0.65rem 0.8rem; border-radius: 0.5rem; border: 1px solid var(--border-color); align-items: center; gap: 0.5rem;">
+                    <label for="yt-primary-profile-select" style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; margin-bottom: 0;">👤 Profil actif :</label>
+                    <select id="yt-primary-profile-select" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 0.35rem; color: var(--text-primary);">
+                        <option value="">-- Aucun profil sauvegardé --</option>
+                    </select>
+                    <button class="btn btn-secondary" id="btn-delete-primary-profile" title="Supprimer ce profil" style="padding: 0.4rem 0.6rem; width: auto; font-size: 0.75rem; border-radius: 0.35rem; color: var(--danger); background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.2); height: auto; box-shadow: none; margin: 0;">🗑️</button>
+                </div>
 
                 <div class="form-group">
                     <label for="yt-headers">En-têtes de Requête Navigateur (Headers)</label>
@@ -1414,6 +1422,14 @@
                                 <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.75rem; line-height: 1.4;">
                                     Collez ci-dessous les en-têtes (Request Headers) de votre deuxième compte (obtenus de la même manière en navigation privée).
                                 </p>
+                                
+                                <div id="yt-secondary-profile-container" style="display: none; margin-bottom: 1rem; background: rgba(15, 23, 42, 0.6); padding: 0.65rem 0.8rem; border-radius: 0.5rem; border: 1px solid var(--border-color); align-items: center; gap: 0.5rem;">
+                                    <label for="yt-secondary-profile-select" style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; margin-bottom: 0;">👤 Profil actif :</label>
+                                    <select id="yt-secondary-profile-select" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 0.35rem; color: var(--text-primary);">
+                                        <option value="">-- Aucun profil sauvegardé --</option>
+                                    </select>
+                                    <button class="btn btn-secondary" id="btn-delete-secondary-profile" title="Supprimer ce profil" style="padding: 0.4rem 0.6rem; width: auto; font-size: 0.75rem; border-radius: 0.35rem; color: var(--danger); background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.2); height: auto; box-shadow: none; margin: 0;">🗑️</button>
+                                </div>
                                 <textarea id="yt-headers-secondary" placeholder="Collez les Request Headers du 2ème compte ici..." style="height: 110px; font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%; font-family: monospace;"></textarea>
                                 <button class="btn btn-secondary" id="btn-save-yt-secondary" style="font-size: 0.75rem; padding: 0.5rem 1rem; text-transform: none; letter-spacing: normal; width: auto; font-weight: 600;">Sauvegarder Compte Destination</button>
                                 <div id="yt-secondary-status-msg" style="font-size: 0.75rem; margin-top: 0.6rem; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
