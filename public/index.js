@@ -172,10 +172,7 @@ function setupEventListeners() {
     const copyDestSelect = document.getElementById('yt-copy-dest-select');
     if (copyDestSelect) {
         copyDestSelect.addEventListener('change', () => {
-            const group = document.getElementById('yt-copy-new-playlist-name-group');
-            if (group) {
-                group.style.display = copyDestSelect.value === '__new__' ? 'block' : 'none';
-            }
+            updateDestInputVisibility(copyDestSelect.value);
         });
     }
     
@@ -3648,18 +3645,38 @@ function populateCopyPlaylistsDropdown() {
     }
 }
 
+function updateDestInputVisibility(value) {
+    const nameGroup = document.getElementById('yt-copy-new-playlist-name-group');
+    const label = document.getElementById('yt-copy-dest-input-label');
+    const input = document.getElementById('yt-copy-new-name');
+    if (!nameGroup || !label || !input) return;
+    
+    if (value === '__new__') {
+        nameGroup.style.display = 'block';
+        label.textContent = 'Nom de la nouvelle playlist destination';
+        input.placeholder = 'Ex: Copie de ma playlist';
+    } else if (value === '__manual__') {
+        nameGroup.style.display = 'block';
+        label.textContent = 'ID de la playlist destination existante';
+        input.placeholder = 'Collez l\'ID de la playlist (ex: PL... ou LM)';
+    } else {
+        nameGroup.style.display = 'none';
+    }
+}
+
 function populateCopyPlaylistsDropdownDestPrimary() {
     const destSelect = document.getElementById('yt-copy-dest-select');
     if (!destSelect) return;
     
     let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
+    html += '<option value="LM">👍 [Titres Likés (Liked Music)]</option>';
+    html += '<option value="__manual__">✏️ [Entrer l\'ID d\'une playlist existante...]</option>';
     appState.playlists.forEach(p => {
         html += `<option value="${p.id}">${p.title}</option>`;
     });
     destSelect.innerHTML = html;
     
-    const nameGroup = document.getElementById('yt-copy-new-playlist-name-group');
-    if (nameGroup) nameGroup.style.display = destSelect.value === '__new__' ? 'block' : 'none';
+    updateDestInputVisibility(destSelect.value);
 }
 
 async function populateCopyPlaylistsDropdownDestSecondary() {
@@ -3673,6 +3690,8 @@ async function populateCopyPlaylistsDropdownDestSecondary() {
         const data = await res.json();
         if (data.success && data.playlists) {
             let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
+            html += '<option value="LM">👍 [Titres Likés (Liked Music)]</option>';
+            html += '<option value="__manual__">✏️ [Entrer l\'ID d\'une playlist existante...]</option>';
             data.playlists.forEach(p => {
                 html += `<option value="${p.id}">${p.title}</option>`;
             });
@@ -3684,8 +3703,7 @@ async function populateCopyPlaylistsDropdownDestSecondary() {
         destSelect.innerHTML = '<option value="__new__">➕ [Créer une nouvelle playlist] (Erreur communication)</option>';
     }
     
-    const nameGroup = document.getElementById('yt-copy-new-playlist-name-group');
-    if (nameGroup) nameGroup.style.display = destSelect.value === '__new__' ? 'block' : 'none';
+    updateDestInputVisibility(destSelect.value);
 }
 
 async function executeYtMerge() {
@@ -3870,11 +3888,18 @@ async function executeYtCopy() {
         return;
     }
     
-    const destPlaylistId = destSelect.value;
+    let destPlaylistId = destSelect.value;
     const destPlaylistName = newNameInput.value.trim();
     if (destPlaylistId === '__new__' && !destPlaylistName) {
         alert('Veuillez entrer le nom de la nouvelle playlist destination.');
         return;
+    }
+    if (destPlaylistId === '__manual__') {
+        if (!destPlaylistName) {
+            alert('Veuillez entrer l\'ID de la playlist de destination.');
+            return;
+        }
+        destPlaylistId = destPlaylistName;
     }
     
     // Reset indicators
