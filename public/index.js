@@ -352,10 +352,53 @@ async function checkStatus() {
         appState.ytMusicConfigured = data.ytMusicConfigured;
         
         // Update Spotify elements
-        if (data.spotifyConfigured) {
+        const spotifyStatusText = document.getElementById('spotify-account-info-text');
+        const spotifyStatusPhoto = document.getElementById('spotify-account-photo');
+        const spotifyStatusBox = document.getElementById('spotify-account-status-msg');
+        
+        if (data.spotifyAuthorized || data.spotifyConfigured) {
             el.spotifyStatus.classList.add('active');
+            el.spotifyClientId.value = data.spotifyClientId || '';
+            el.btnAuthSpotify.removeAttribute('disabled');
+            
+            let spotifyNameStr = 'Spotify Configuré';
+            if (data.spotifyAccount) {
+                const displayName = data.spotifyAccount.displayName || '';
+                const email = data.spotifyAccount.email || '';
+                if (displayName && email) {
+                    spotifyNameStr = `${displayName} (${email})`;
+                } else if (displayName) {
+                    spotifyNameStr = displayName;
+                }
+                
+                if (spotifyStatusBox) {
+                    spotifyStatusBox.style.display = 'flex';
+                    if (spotifyStatusText) {
+                        spotifyStatusText.textContent = `Compte connecté : ${displayName} ${email ? '(' + email + ')' : ''}`;
+                    }
+                    if (spotifyStatusPhoto) {
+                        if (data.spotifyAccount.photoUrl) {
+                            spotifyStatusPhoto.src = data.spotifyAccount.photoUrl;
+                            spotifyStatusPhoto.style.display = 'inline-block';
+                        } else {
+                            spotifyStatusPhoto.style.display = 'none';
+                        }
+                    }
+                }
+            } else {
+                if (data.usingWebPlayerToken) {
+                    spotifyNameStr = 'Spotify Configuré (Jeton Web)';
+                } else {
+                    spotifyNameStr = 'Spotify Configuré';
+                }
+                if (spotifyStatusBox) {
+                    spotifyStatusBox.style.display = 'none';
+                }
+            }
+            
+            el.spotifyStatus.innerHTML = `<span class="dot"></span> ${spotifyNameStr}`;
+            
             if (data.usingWebPlayerToken) {
-                el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Configuré (Jeton Web)';
                 const tokenInput = document.getElementById('spotify-web-token');
                 if (tokenInput && !tokenInput.value) {
                     tokenInput.value = data.spotifyWebPlayerToken || '';
@@ -376,24 +419,62 @@ async function checkStatus() {
                     setupPanelWeb.style.display = 'block';
                     setupPanelOauth.style.display = 'none';
                 }
-            } else {
-                el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Configuré';
             }
-            el.spotifyClientId.value = data.spotifyClientId;
-            el.btnAuthSpotify.removeAttribute('disabled');
         } else {
             el.spotifyStatus.classList.remove('active');
-            el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Non Configuré';
+            el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Non Connecté';
             el.btnAuthSpotify.setAttribute('disabled', 'true');
+            if (spotifyStatusBox) {
+                spotifyStatusBox.style.display = 'none';
+            }
         }
         
         // Update YT Music badge
+        const ytStatusText = document.getElementById('yt-account-info-text');
+        const ytStatusPhoto = document.getElementById('yt-account-photo');
+        const ytStatusBox = document.getElementById('yt-primary-status-msg');
+        
         if (data.ytMusicConfigured) {
             el.ytStatus.classList.add('active');
+            let ytNameStr = 'YouTube Music Connecté';
+            if (data.ytAccount) {
+                const name = data.ytAccount.accountName || '';
+                const handle = data.ytAccount.channelHandle || '';
+                if (name && handle) {
+                    ytNameStr = `${name} (${handle})`;
+                } else if (name) {
+                    ytNameStr = name;
+                }
+                
+                if (ytStatusBox) {
+                    ytStatusBox.style.display = 'flex';
+                    if (ytStatusText) {
+                        ytStatusText.textContent = `Compte connecté : ${name} ${handle ? '(' + handle + ')' : ''}`;
+                    }
+                    if (ytStatusPhoto) {
+                        if (data.ytAccount.accountPhotoUrl) {
+                            ytStatusPhoto.src = data.ytAccount.accountPhotoUrl;
+                            ytStatusPhoto.style.display = 'inline-block';
+                        } else {
+                            ytStatusPhoto.style.display = 'none';
+                        }
+                    }
+                }
+            } else {
+                if (ytStatusBox) {
+                    ytStatusBox.style.display = 'none';
+                }
+            }
+            
+            el.ytStatus.innerHTML = `<span class="dot"></span> ${ytNameStr}`;
             if (el.ytToolsSection) el.ytToolsSection.style.display = 'block';
         } else {
             el.ytStatus.classList.remove('active');
+            el.ytStatus.innerHTML = '<span class="dot"></span> YouTube Music Non Connecté';
             if (el.ytToolsSection) el.ytToolsSection.style.display = 'none';
+            if (ytStatusBox) {
+                ytStatusBox.style.display = 'none';
+            }
         }
         
         // Show dashboard if everything is configured
@@ -3417,16 +3498,55 @@ window.robustCopyText = async function(text) {
 async function checkSecondaryAccountStatus() {
     const statusMsg = document.getElementById('yt-secondary-status-msg');
     if (!statusMsg) return;
+    
+    const secondaryPhoto = document.getElementById('yt-secondary-account-photo');
+    const secondaryText = document.getElementById('yt-secondary-account-info-text');
+    
     try {
         const res = await fetch('/api/status');
         const data = await res.json();
         if (data.ytMusicSecondaryConfigured) {
-            statusMsg.innerHTML = 'Statut : Compte connecté ✅';
+            if (data.ytSecondaryAccount) {
+                const name = data.ytSecondaryAccount.accountName || '';
+                const handle = data.ytSecondaryAccount.channelHandle || '';
+                
+                if (secondaryText) {
+                    secondaryText.textContent = `Statut : Connecté à ${name} ${handle ? '(' + handle + ')' : ''} ✅`;
+                } else {
+                    statusMsg.innerHTML = `Statut : Connecté à ${name} ${handle ? '(' + handle + ')' : ''} ✅`;
+                }
+                
+                if (secondaryPhoto) {
+                    if (data.ytSecondaryAccount.accountPhotoUrl) {
+                        secondaryPhoto.src = data.ytSecondaryAccount.accountPhotoUrl;
+                        secondaryPhoto.style.display = 'inline-block';
+                    } else {
+                        secondaryPhoto.style.display = 'none';
+                    }
+                }
+            } else {
+                if (secondaryText) {
+                    secondaryText.textContent = 'Statut : Compte connecté ✅';
+                } else {
+                    statusMsg.innerHTML = 'Statut : Compte connecté ✅';
+                }
+                if (secondaryPhoto) secondaryPhoto.style.display = 'none';
+            }
         } else {
-            statusMsg.innerHTML = 'Statut : Compte non configuré ❌';
+            if (secondaryText) {
+                secondaryText.textContent = 'Statut : Compte non configuré ❌';
+            } else {
+                statusMsg.innerHTML = 'Statut : Compte non configuré ❌';
+            }
+            if (secondaryPhoto) secondaryPhoto.style.display = 'none';
         }
     } catch (e) {
-        statusMsg.innerHTML = 'Statut : Erreur de communication ❌';
+        if (secondaryText) {
+            secondaryText.textContent = 'Statut : Erreur de communication ❌';
+        } else {
+            statusMsg.innerHTML = 'Statut : Erreur de communication ❌';
+        }
+        if (secondaryPhoto) secondaryPhoto.style.display = 'none';
     }
 }
 

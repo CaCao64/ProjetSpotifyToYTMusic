@@ -157,14 +157,83 @@ function handleSpotifyError(error, res) {
 }
 
 
+let ytAccountCached = null;
+let ytSecondaryAccountCached = null;
+let spotifyAccountCached = null;
+
+async function getOrFetchYtAccount(force = false) {
+    if (!fs.existsSync(YT_AUTH_PATH)) {
+        ytAccountCached = null;
+        return null;
+    }
+    if (ytAccountCached && !force) return ytAccountCached;
+    try {
+        const res = await runPythonHelper({
+            action: 'get_account_info',
+            auth_path: YT_AUTH_PATH
+        });
+        ytAccountCached = res;
+        return res;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function getOrFetchYtSecondaryAccount(force = false) {
+    if (!fs.existsSync(YT_AUTH_PATH_SECONDARY)) {
+        ytSecondaryAccountCached = null;
+        return null;
+    }
+    if (ytSecondaryAccountCached && !force) return ytSecondaryAccountCached;
+    try {
+        const res = await runPythonHelper({
+            action: 'get_account_info',
+            auth_path: YT_AUTH_PATH_SECONDARY
+        });
+        ytSecondaryAccountCached = res;
+        return res;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function getOrFetchSpotifyAccount(force = false) {
+    const config = loadConfig();
+    const usingWebPlayerToken = !!config.spotifyWebPlayerToken;
+    const spotifyAuthorized = !!config.spotifyRefreshToken || usingWebPlayerToken;
+    if (!spotifyAuthorized) {
+        spotifyAccountCached = null;
+        return null;
+    }
+    if (spotifyAccountCached && !force) return spotifyAccountCached;
+    try {
+        const token = await getSpotifyToken();
+        const response = await axios.get('https://api.spotify.com/v1/me', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        spotifyAccountCached = {
+            displayName: response.data.display_name,
+            email: response.data.email || null,
+            photoUrl: response.data.images && response.data.images[0] ? response.data.images[0].url : null
+        };
+        return spotifyAccountCached;
+    } catch (e) {
+        return null;
+    }
+}
+
 // API: Get App Status and Config
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
     const config = loadConfig();
     const usingWebPlayerToken = !!config.spotifyWebPlayerToken;
     const spotifyConfigured = !!(config.spotifyClientId && config.spotifyClientSecret) || usingWebPlayerToken;
     const spotifyAuthorized = !!config.spotifyRefreshToken || usingWebPlayerToken;
     const ytMusicConfigured = fs.existsSync(YT_AUTH_PATH);
     const ytMusicSecondaryConfigured = fs.existsSync(YT_AUTH_PATH_SECONDARY);
+    
+    const ytAccount = ytMusicConfigured ? await getOrFetchYtAccount() : null;
+    const ytSecondaryAccount = ytMusicSecondaryConfigured ? await getOrFetchYtSecondaryAccount() : null;
+    const spotifyAccount = spotifyAuthorized ? await getOrFetchSpotifyAccount() : null;
     
     res.json({
         spotifyConfigured,
@@ -173,7 +242,10 @@ app.get('/api/status', (req, res) => {
         ytMusicConfigured,
         ytMusicSecondaryConfigured,
         usingWebPlayerToken,
-        spotifyWebPlayerToken: config.spotifyWebPlayerToken || ''
+        spotifyWebPlayerToken: config.spotifyWebPlayerToken || '',
+        ytAccount,
+        ytSecondaryAccount,
+        spotifyAccount
     });
 });
 
@@ -195,6 +267,7 @@ app.post('/api/config', async (req, res) => {
                 headers_raw: ytHeaders,
                 filepath: YT_AUTH_PATH
             });
+            await getOrFetchYtAccount(true);
         }
         if (ytHeadersSecondary && ytHeadersSecondary.trim()) {
             await runPythonHelper({
@@ -202,6 +275,10 @@ app.post('/api/config', async (req, res) => {
                 headers_raw: ytHeadersSecondary,
                 filepath: YT_AUTH_PATH_SECONDARY
             });
+            await getOrFetchYtSecondaryAccount(true);
+        }
+        if (spotifyWebPlayerToken !== undefined) {
+            await getOrFetchSpotifyAccount(true);
         }
         res.json({ success: true });
     } catch (e) {
@@ -217,7 +294,7 @@ app.get('/api/spotify/login', (req, res) => {
     }
     
     const redirectUri = `http://127.0.0.1:${PORT}/api/spotify/callback`;
-    const scopes = 'user-library-read user-library-modify playlist-read-private playlist-modify-public playlist-modify-private user-read-private';
+    const scopes = 'user-library-read user-library-modify playlist-read-private playlist-modify-public playlist-modify-private user-read-private user-read-email';
     const spotifyAuthUrl = `https://accounts.spotify.com/authorize?` + 
         new URLSearchParams({
             response_type: 'code',
@@ -260,6 +337,8 @@ app.get('/api/spotify/callback', async (req, res) => {
         config.spotifyTokenExpires = Date.now() + (response.data.expires_in * 1000);
         config.spotifyWebPlayerToken = ''; // Clear Web Player token on successful OAuth login
         saveConfig(config);
+        
+        getOrFetchSpotifyAccount(true).catch(() => {});
         
         // Redirect back to home dashboard
         res.redirect('/');

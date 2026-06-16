@@ -36,6 +36,23 @@ def main():
             setup(filepath=filepath, headers_raw=headers_raw)
             print(json.dumps({"success": True}))
             
+        elif action == "get_account_info":
+            auth_path = req.get("auth_path", "data/browser.json")
+            if not os.path.exists(auth_path):
+                print(json.dumps({"success": False, "error": f"Auth file not found at {auth_path}."}))
+                return
+            yt = YTMusic(auth_path)
+            try:
+                info = yt.get_account_info()
+                print(json.dumps({
+                    "success": True, 
+                    "accountName": info.get("accountName"), 
+                    "channelHandle": info.get("channelHandle"), 
+                    "accountPhotoUrl": info.get("accountPhotoUrl")
+                }))
+            except Exception as e:
+                print(json.dumps({"success": False, "error": str(e)}))
+            
         elif action == "get_playlists":
             auth_path = req.get("auth_path", "data/browser.json")
             if not os.path.exists(auth_path):

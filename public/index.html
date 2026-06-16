@@ -32,6 +32,11 @@
             <div class="card">
                 <h2><img src="Spotify_icon.ico" class="spotify-logo-icon" alt="Spotify" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 0.5rem; position: relative; top: -2px;"> Configurer Spotify</h2>
                 
+                <div id="spotify-account-status-msg" style="font-size: 0.8rem; margin-top: -0.5rem; margin-bottom: 1.25rem; color: var(--text-secondary); font-weight: 500; display: none; align-items: center; gap: 0.6rem; background: rgba(29, 185, 84, 0.08); padding: 0.6rem 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(29, 185, 84, 0.2);">
+                    <img id="spotify-account-photo" src="" style="width: 28px; height: 28px; border-radius: 50%; display: none; border: 1px solid rgba(255, 255, 255, 0.15);">
+                    <span id="spotify-account-info-text"></span>
+                </div>
+                
                 <!-- Inner tab selection -->
                 <div class="setup-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); padding: 0.25rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
                     <button id="btn-setup-tab-web" class="btn active" style="flex: 1; padding: 0.45rem; font-size: 0.75rem; border-radius: 0.35rem; text-transform: none; font-weight: 600; border: none; box-shadow: none;">🔑 Jeton Web Player (Recommandé)</button>
@@ -280,6 +285,12 @@
             <!-- YT Music Setup Card -->
             <div class="card">
                 <h2><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM" style="width: 20px; height: 20px; vertical-align: middle; margin-right: 0.5rem; position: relative; top: -2px;"> Configurer YouTube Music</h2>
+                
+                <div id="yt-primary-status-msg" style="font-size: 0.8rem; margin-top: -0.5rem; margin-bottom: 1.25rem; color: var(--text-secondary); font-weight: 500; display: none; align-items: center; gap: 0.6rem; background: rgba(255, 0, 0, 0.08); padding: 0.6rem 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(255, 0, 0, 0.2);">
+                    <img id="yt-account-photo" src="" style="width: 28px; height: 28px; border-radius: 50%; display: none; border: 1px solid rgba(255, 255, 255, 0.15);">
+                    <span id="yt-account-info-text"></span>
+                </div>
+
                 <div class="form-group">
                     <label for="yt-headers">En-têtes de Requête Navigateur (Headers)</label>
                     <textarea id="yt-headers" placeholder="Collez ici les en-têtes (Request Headers) copiés depuis music.youtube.com..."></textarea>
@@ -1405,8 +1416,9 @@
                                 </p>
                                 <textarea id="yt-headers-secondary" placeholder="Collez les Request Headers du 2ème compte ici..." style="height: 110px; font-size: 0.75rem; margin-bottom: 0.75rem; width: 100%; font-family: monospace;"></textarea>
                                 <button class="btn btn-secondary" id="btn-save-yt-secondary" style="font-size: 0.75rem; padding: 0.5rem 1rem; text-transform: none; letter-spacing: normal; width: auto; font-weight: 600;">Sauvegarder Compte Destination</button>
-                                <div id="yt-secondary-status-msg" style="font-size: 0.75rem; margin-top: 0.6rem; color: var(--text-secondary); font-weight: 500;">
-                                    Statut : Compte non configuré ❌
+                                <div id="yt-secondary-status-msg" style="font-size: 0.75rem; margin-top: 0.6rem; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
+                                    <img id="yt-secondary-account-photo" src="" style="width: 24px; height: 24px; border-radius: 50%; display: none; border: 1px solid rgba(255, 255, 255, 0.15);">
+                                    <span id="yt-secondary-account-info-text">Statut : Compte non configuré ❌</span>
                                 </div>
                             </div>
                             
