@@ -356,12 +356,13 @@ async function checkStatus() {
         const spotifyStatusPhoto = document.getElementById('spotify-account-photo');
         const spotifyStatusBox = document.getElementById('spotify-account-status-msg');
         
-        if (data.spotifyAuthorized || data.spotifyConfigured) {
+        if (data.spotifyAuthorized) {
             el.spotifyStatus.classList.add('active');
+            el.spotifyStatus.classList.remove('warning');
             el.spotifyClientId.value = data.spotifyClientId || '';
             el.btnAuthSpotify.removeAttribute('disabled');
             
-            let spotifyNameStr = 'Spotify Configuré';
+            let spotifyNameStr = '';
             if (data.spotifyAccount) {
                 const displayName = data.spotifyAccount.displayName || '';
                 const email = data.spotifyAccount.email || '';
@@ -373,8 +374,11 @@ async function checkStatus() {
                 
                 if (spotifyStatusBox) {
                     spotifyStatusBox.style.display = 'flex';
+                    spotifyStatusBox.style.background = 'rgba(29, 185, 84, 0.08)';
+                    spotifyStatusBox.style.borderColor = 'rgba(29, 185, 84, 0.2)';
                     if (spotifyStatusText) {
                         spotifyStatusText.textContent = `Compte connecté : ${displayName} ${email ? '(' + email + ')' : ''}`;
+                        spotifyStatusText.style.color = 'var(--text-primary)';
                     }
                     if (spotifyStatusPhoto) {
                         if (data.spotifyAccount.photoUrl) {
@@ -387,15 +391,23 @@ async function checkStatus() {
                 }
             } else {
                 if (data.usingWebPlayerToken) {
-                    spotifyNameStr = 'Spotify Configuré (Jeton Web)';
+                    spotifyNameStr = 'Spotify Connecté (Jeton Web)';
                 } else {
-                    spotifyNameStr = 'Spotify Configuré';
+                    spotifyNameStr = 'Spotify Connecté (Premium requis)';
                 }
+                
                 if (spotifyStatusBox) {
-                    spotifyStatusBox.style.display = 'none';
+                    spotifyStatusBox.style.display = 'flex';
+                    spotifyStatusBox.style.background = 'rgba(234, 179, 8, 0.08)';
+                    spotifyStatusBox.style.borderColor = 'rgba(234, 179, 8, 0.2)';
+                    if (spotifyStatusText) {
+                        spotifyStatusText.innerHTML = `Compte connecté. <span style="font-size: 0.75rem; color: var(--text-secondary); display: block; margin-top: 0.15rem;">⚠️ Spotify Premium requis pour afficher le nom du profil.</span>`;
+                    }
+                    if (spotifyStatusPhoto) {
+                        spotifyStatusPhoto.style.display = 'none';
+                    }
                 }
             }
-            
             el.spotifyStatus.innerHTML = `<span class="dot"></span> ${spotifyNameStr}`;
             
             if (data.usingWebPlayerToken) {
@@ -403,25 +415,28 @@ async function checkStatus() {
                 if (tokenInput && !tokenInput.value) {
                     tokenInput.value = data.spotifyWebPlayerToken || '';
                 }
-                
-                // Show Web panel by default if using Web Player token
-                const btnSetupTabWeb = document.getElementById('btn-setup-tab-web');
-                const btnSetupTabOauth = document.getElementById('btn-setup-tab-oauth');
-                const setupPanelWeb = document.getElementById('setup-panel-web');
-                const setupPanelOauth = document.getElementById('setup-panel-oauth');
-                if (btnSetupTabWeb && btnSetupTabOauth && setupPanelWeb && setupPanelOauth) {
-                    btnSetupTabWeb.classList.add('active');
-                    btnSetupTabWeb.style.background = '';
-                    btnSetupTabWeb.style.color = '';
-                    btnSetupTabOauth.classList.remove('active');
-                    btnSetupTabOauth.style.background = 'transparent';
-                    btnSetupTabOauth.style.color = 'var(--text-secondary)';
-                    setupPanelWeb.style.display = 'block';
-                    setupPanelOauth.style.display = 'none';
+            }
+        } else if (data.spotifyConfigured) {
+            el.spotifyStatus.classList.remove('active');
+            el.spotifyStatus.classList.add('warning');
+            el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Non Connecté';
+            el.spotifyClientId.value = data.spotifyClientId || '';
+            el.btnAuthSpotify.removeAttribute('disabled');
+            
+            if (spotifyStatusBox) {
+                spotifyStatusBox.style.display = 'flex';
+                spotifyStatusBox.style.background = 'rgba(234, 179, 8, 0.08)';
+                spotifyStatusBox.style.borderColor = 'rgba(234, 179, 8, 0.2)';
+                if (spotifyStatusText) {
+                    spotifyStatusText.innerHTML = `⚠️ Configuré, mais non connecté.<br><span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 500;">Veuillez cliquer sur <strong>SE CONNECTER À SPOTIFY</strong> ci-dessous.</span>`;
+                }
+                if (spotifyStatusPhoto) {
+                    spotifyStatusPhoto.style.display = 'none';
                 }
             }
         } else {
             el.spotifyStatus.classList.remove('active');
+            el.spotifyStatus.classList.remove('warning');
             el.spotifyStatus.innerHTML = '<span class="dot"></span> Spotify Non Connecté';
             el.btnAuthSpotify.setAttribute('disabled', 'true');
             if (spotifyStatusBox) {

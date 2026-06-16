@@ -133,6 +133,11 @@ header {
     box-shadow: 0 0 10px var(--spotify-green);
 }
 
+.status-badge.warning .dot {
+    background: #eab308;
+    box-shadow: 0 0 10px #eab308;
+}
+
 /* Premium Card Glassmorphism */
 .card {
     background: var(--bg-card);
