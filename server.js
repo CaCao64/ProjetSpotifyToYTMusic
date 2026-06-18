@@ -2004,13 +2004,15 @@ app.get('/api/spotify/transfer-stream', async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-    console.log(`Server running on http://127.0.0.1:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
     // Initialize profiles from existing files if config has none
     initializeProfiles().catch(err => console.error("Profile auto-import error:", err));
     
-    // Open application in default web browser
-    open(`http://127.0.0.1:${PORT}`).catch(err => {
-        console.log(`Failed to auto-open browser: ${err.message}`);
-    });
+    // Open application in default web browser (only if not in production/docker)
+    if (process.env.NODE_ENV !== 'production' && !process.env.PORT) {
+        open(`http://127.0.0.1:${PORT}`).catch(err => {
+            console.log(`Failed to auto-open browser: ${err.message}`);
+        });
+    }
 });

@@ -24,9 +24,8 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # Copier les fichiers du projet
 COPY . .
 
-# Configurer le port par défaut
-ENV PORT=3000
-EXPOSE 3000
+ENV PORT=10000
+EXPOSE 10000
 
 # Lancer le serveur
 CMD ["node", "server.js"]
