@@ -9,6 +9,7 @@ let appState = {
 };
 
 let activeTab = 'spotify-to-yt'; // 'spotify-to-yt' or 'yt-to-spotify'
+let tabTransitionTimeout = null;
 let ytState = {
     tracks: [], // YouTube Music tracks
     matches: {}, // Spotify matches keyed by YTM videoId
@@ -81,6 +82,12 @@ const el = {
 window.addEventListener('DOMContentLoaded', () => {
     checkStatus();
     setupEventListeners();
+    initCustomSelects();
+    
+    // Restore saved tab
+    const savedTab = localStorage.getItem('activeYtTab') || 'spotify-to-yt';
+    activeTab = null; // force selection
+    switchTab(savedTab, true);
 });
 
 // Event Listeners
@@ -368,8 +375,10 @@ function setupEventListeners() {
 // Check configuration status
 async function checkStatus() {
     try {
-        const res = await fetch('/api/status');
+        console.log(`[checkStatus] Fetching /api/status...`);
+        const res = await fetch(`/api/status?t=${Date.now()}`);
         const data = await res.json();
+        console.log(`[checkStatus] Spotify configured: ${data.spotifyConfigured}, Spotify authorized: ${data.spotifyAuthorized}, YTM configured: ${data.ytMusicConfigured}`);
         
         appState.spotifyConfigured = data.spotifyConfigured;
         appState.spotifyAuthorized = data.spotifyAuthorized;
@@ -629,14 +638,16 @@ function handlePlaylistSelectChange() {
 
 // Load Playlists
 async function loadPlaylists() {
+    console.log(`[loadPlaylists] Starting loadPlaylists...`);
     el.playlistSelect.innerHTML = '<option value="">Chargement des playlists...</option>';
     const ytSourceSelect = document.getElementById('yt-source-playlist-select');
     if (ytSourceSelect) ytSourceSelect.innerHTML = '<option value="LM">Titres Likés (Liked Music)</option>';
     try {
-        const res = await fetch('/api/ytmusic/playlists');
+        const res = await fetch(`/api/ytmusic/playlists?t=${Date.now()}`);
         const data = await res.json();
         
         if (data.success) {
+            console.log(`[loadPlaylists] Successfully loaded ${data.playlists.length} playlists.`);
             appState.playlists = data.playlists;
             
             let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
@@ -648,12 +659,21 @@ async function loadPlaylists() {
             
             el.playlistSelect.innerHTML = html;
             if (ytSourceSelect) ytSourceSelect.innerHTML = htmlYtSource;
+            refreshCustomSelect(el.playlistSelect);
+            if (ytSourceSelect) refreshCustomSelect(ytSourceSelect);
+            
+            // Refresh Merge & Copy controls dynamically
+            populateMergePlaylistsList();
+            populateCopyPlaylistsDropdown();
+            
             handlePlaylistSelectChange();
         } else {
             el.playlistSelect.innerHTML = '<option value="">Erreur de chargement</option>';
+            refreshCustomSelect(el.playlistSelect);
         }
     } catch (e) {
         el.playlistSelect.innerHTML = '<option value="">Erreur de communication</option>';
+        refreshCustomSelect(el.playlistSelect);
     }
 }
 
@@ -675,7 +695,7 @@ async function loadSpotifySongs() {
     `;
     
     try {
-        const res = await fetch('/api/spotify/tracks');
+        const res = await fetch(`/api/spotify/tracks?t=${Date.now()}`);
         const data = await res.json();
         
         if (data.success) {
@@ -1518,63 +1538,150 @@ async function executeTransfer() {
 }
 
 async function clearLikedSongs() {
-    if (!confirm("⚠️ ATTENTION : Voulez-vous vraiment supprimer TOUS les titres likés de votre compte YouTube Music ?\n\nCette action est irréversible et retirera le \"J'aime\" de tous les morceaux de votre bibliothèque.")) {
-        return;
+    const btn = el.btnClearLiked;
+    let originalText = 'Supprimer les titres likés';
+    if (btn) {
+        originalText = btn.textContent;
+        btn.setAttribute('disabled', 'true');
+        btn.textContent = 'Calcul en cours...';
     }
     
-    const confirmation = prompt("Pour confirmer cette action destructrice, veuillez saisir le mot 'SUPPRIMER' en toutes lettres :");
-    if (confirmation !== 'SUPPRIMER') {
-        alert("Action annulée : confirmation incorrecte.");
-        return;
-    }
-    
-    // Lock controls
-    if (el.btnExecuteTransfer) el.btnExecuteTransfer.setAttribute('disabled', 'true');
-    if (el.btnStartMatching) el.btnStartMatching.setAttribute('disabled', 'true');
-    if (el.btnLoadSpotifySongs) el.btnLoadSpotifySongs.setAttribute('disabled', 'true');
-    if (el.btnClearLiked) el.btnClearLiked.setAttribute('disabled', 'true');
-    
-    el.progressCard.style.display = 'block';
-    el.consoleLog.innerHTML = '';
-    el.progressBarFill.style.width = '0%';
-    el.progressCounter.textContent = '0 / 0';
-    el.progressTitle.textContent = 'Suppression des titres likés...';
-    
-    logToConsole('Préparation de la suppression des titres likés...', 'info');
-    
-    const eventSourceUrl = '/api/ytmusic/clear-liked-stream';
-    const source = new EventSource(eventSourceUrl);
-    
-    source.addEventListener('info', (event) => {
-        const data = JSON.parse(event.data);
-        logToConsole(data.message, 'info');
-    });
-    
-    source.addEventListener('progress', (event) => {
-        const data = JSON.parse(event.data);
-        el.progressBarFill.style.width = `${data.percent}%`;
-        el.progressCounter.textContent = `${data.added} / ${data.total}`;
-        logToConsole(data.message, 'success');
-    });
-    
-    source.addEventListener('success', (event) => {
-        const data = JSON.parse(event.data);
-        logToConsole(data.message, 'success');
-        el.progressBarFill.style.width = '100%';
-        source.close();
+    try {
+        logToConsole('Interrogation du nombre de titres likés sur votre compte...', 'info');
+        const res = await fetch(`/api/ytmusic/liked-metadata?t=${Date.now()}`);
+        const data = await res.json();
         
-        alert('Suppression terminée avec succès !');
-        el.progressTitle.textContent = 'Transfert en cours...'; // Reset title for next transfers
-        unlockControls();
-    });
-    
-    source.addEventListener('error', (event) => {
-        const data = event.data ? JSON.parse(event.data) : { error: 'Erreur de connexion SSE' };
-        logToConsole(`Erreur durant la suppression : ${data.error}`, 'error');
-        source.close();
-        el.progressTitle.textContent = 'Transfert en cours...'; // Reset title
-        unlockControls();
-    });
+        if (btn) {
+            btn.removeAttribute('disabled');
+            btn.textContent = originalText;
+        }
+        
+        if (!data.success) {
+            alert(`Impossible de calculer le nombre de titres : ${data.error}`);
+            return;
+        }
+        
+        const count = data.count;
+        if (count === 0) {
+            alert("Aucun titre liké trouvé sur votre compte YouTube Music.");
+            return;
+        }
+        
+        // Estimation formula: ~0.25s per track + 1s per batch of 100 + 3s between passes
+        const estimatedSeconds = Math.round((count * 0.25) + (Math.ceil(count / 100) * 1) + 3);
+        const minutes = Math.floor(estimatedSeconds / 60);
+        const seconds = estimatedSeconds % 60;
+        const timeStr = minutes > 0 ? `${minutes} min et ${seconds} sec` : `${seconds} sec`;
+        
+        if (!confirm(`⚠️ ATTENTION : Vous allez supprimer TOUS les titres likés de votre bibliothèque YouTube Music.\n\n• Nombre de titres détectés : ${count}\n• Temps de suppression estimé : environ ${timeStr}\n\nCette action est irréversible et retirera le \"J'aime\" de tous les morceaux de votre bibliothèque. Voulez-vous continuer ?`)) {
+            return;
+        }
+        
+        const confirmation = prompt("Pour confirmer cette action destructrice, veuillez saisir le mot 'SUPPRIMER' en toutes lettres :");
+        if (confirmation !== 'SUPPRIMER') {
+            alert("Action annulée : confirmation incorrecte.");
+            return;
+        }
+        
+        // Lock controls
+        if (el.btnExecuteTransfer) el.btnExecuteTransfer.setAttribute('disabled', 'true');
+        if (el.btnStartMatching) el.btnStartMatching.setAttribute('disabled', 'true');
+        if (el.btnLoadSpotifySongs) el.btnLoadSpotifySongs.setAttribute('disabled', 'true');
+        if (el.btnClearLiked) el.btnClearLiked.setAttribute('disabled', 'true');
+        
+        const clearCard = document.getElementById('yt-clear-progress-card');
+        const clearTitle = document.getElementById('yt-clear-progress-title');
+        const clearCounter = document.getElementById('yt-clear-progress-counter');
+        const clearBarFill = document.getElementById('yt-clear-progress-bar-fill');
+        const clearEta = document.getElementById('yt-clear-progress-eta');
+        const clearPercent = document.getElementById('yt-clear-progress-percent');
+        const clearConsole = document.getElementById('yt-clear-console-log');
+        
+        clearCard.style.display = 'block';
+        clearConsole.innerHTML = '';
+        clearBarFill.style.width = '0%';
+        clearCounter.textContent = `0 / ${count}`;
+        clearPercent.textContent = '0%';
+        clearEta.textContent = 'Calcul du temps restant...';
+        clearTitle.textContent = 'Suppression des titres likés...';
+        
+        const log = (message, type = 'info') => {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            clearConsole.appendChild(entry);
+            clearConsole.scrollTop = clearConsole.scrollHeight;
+        };
+        
+        log(`Lancement de la suppression de ${count} titres likés (Temps estimé : ${timeStr})...`, 'info');
+        const startTime = Date.now();
+        
+        const eventSourceUrl = '/api/ytmusic/clear-liked-stream';
+        const source = new EventSource(eventSourceUrl);
+        
+        source.addEventListener('info', (event) => {
+            const data = JSON.parse(event.data);
+            log(data.message, 'info');
+        });
+        
+        source.addEventListener('progress', (event) => {
+            const data = JSON.parse(event.data);
+            clearBarFill.style.width = `${data.percent}%`;
+            clearPercent.textContent = `${data.percent}%`;
+            clearCounter.textContent = `${data.added} / ${data.total}`;
+            log(data.message, 'success');
+            
+            // Calculate dynamic ETA
+            const processed = data.added;
+            if (processed > 0) {
+                const elapsedMs = Date.now() - startTime;
+                const tracksPerMs = processed / elapsedMs;
+                const remainingTracks = data.total - data.added;
+                const remainingMs = remainingTracks / tracksPerMs;
+                
+                if (remainingTracks <= 0) {
+                    clearEta.textContent = 'Terminé';
+                } else {
+                    const totalSeconds = Math.round(remainingMs / 1000);
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = totalSeconds % 60;
+                    let etaText = 'Temps restant estimé : ';
+                    if (minutes > 0) {
+                        etaText += `${minutes} min ${seconds} s`;
+                    } else {
+                        etaText += `${seconds} s`;
+                    }
+                    clearEta.textContent = etaText;
+                }
+            }
+        });
+        
+        source.addEventListener('success', (event) => {
+            const data = JSON.parse(event.data);
+            log(data.message, 'success');
+            clearBarFill.style.width = '100%';
+            clearPercent.textContent = '100%';
+            clearEta.textContent = 'Terminé';
+            source.close();
+            
+            alert('Suppression terminée avec succès !');
+            unlockControls();
+        });
+        
+        source.addEventListener('error', (event) => {
+            const data = event.data ? JSON.parse(event.data) : { error: 'Erreur de connexion SSE' };
+            log(`Erreur durant la suppression : ${data.error}`, 'error');
+            clearEta.textContent = 'Erreur';
+            source.close();
+            unlockControls();
+        });
+    } catch (err) {
+        if (btn) {
+            btn.removeAttribute('disabled');
+            btn.textContent = originalText;
+        }
+        alert(`Erreur de communication avec le serveur : ${err.message}`);
+    }
 }
 
 // Enable controls back
@@ -2275,51 +2382,119 @@ function copyYtCleanScript() {
 // ==========================================
 
 // Switch between tabs
-function switchTab(tab) {
-    activeTab = tab;
+function switchTab(tab, isInitial = false) {
+    if (tab === activeTab) return;
     
-    const btnTabSpotifyToYt = document.getElementById('btn-tab-spotify-to-yt');
-    const btnTabYtToSpotify = document.getElementById('btn-tab-yt-to-spotify');
-    const btnTabYtMerge = document.getElementById('btn-tab-yt-merge');
-    const btnTabYtCopy = document.getElementById('btn-tab-yt-copy');
+    // Clear any pending transition timeout to prevent race conditions
+    if (tabTransitionTimeout) {
+        clearTimeout(tabTransitionTimeout);
+        tabTransitionTimeout = null;
+    }
     
-    const panelSpotify = document.getElementById('panel-spotify-to-yt');
-    const panelYt = document.getElementById('panel-yt-to-spotify');
-    const panelMerge = document.getElementById('panel-yt-merge');
-    const panelCopy = document.getElementById('panel-yt-copy');
+    const wrapper = document.getElementById('tab-panels-wrapper');
     
-    // Deactivate all buttons
-    if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.remove('active');
-    if (btnTabYtToSpotify) btnTabYtToSpotify.classList.remove('active');
-    if (btnTabYtMerge) btnTabYtMerge.classList.remove('active');
-    if (btnTabYtCopy) btnTabYtCopy.classList.remove('active');
-    
-    // Deactivate all panels
-    if (panelSpotify) panelSpotify.classList.remove('active');
-    if (panelYt) panelYt.classList.remove('active');
-    if (panelMerge) panelMerge.classList.remove('active');
-    if (panelCopy) panelCopy.classList.remove('active');
-    
-    if (tab === 'spotify-to-yt') {
-        if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.add('active');
-        if (panelSpotify) panelSpotify.classList.add('active');
-    } else if (tab === 'yt-to-spotify') {
-        if (btnTabYtToSpotify) btnTabYtToSpotify.classList.add('active');
-        if (panelYt) panelYt.classList.add('active');
-        
-        // Dynamic fetch of Spotify playlists if not loaded yet
-        if (ytState.playlists.length === 0 && appState.spotifyAuthorized) {
-            loadSpotifyPlaylists();
+    // Only scroll if the tab bar is above the viewport (user scrolled past it)
+    const tabBar = document.querySelector('.tabs');
+    if (tabBar && !isInitial) {
+        const tabBarRect = tabBar.getBoundingClientRect();
+        if (tabBarRect.top < 0) {
+            // Tab bar is above viewport, scroll it back into view instantly
+            tabBar.scrollIntoView({ behavior: 'auto', block: 'start' });
         }
-    } else if (tab === 'yt-merge') {
-        if (btnTabYtMerge) btnTabYtMerge.classList.add('active');
-        if (panelMerge) panelMerge.classList.add('active');
-        populateMergePlaylistsList();
-    } else if (tab === 'yt-copy') {
-        if (btnTabYtCopy) btnTabYtCopy.classList.add('active');
-        if (panelCopy) panelCopy.classList.add('active');
-        populateCopyPlaylistsDropdown();
-        checkSecondaryAccountStatus();
+    }
+    
+    const runSwitch = () => {
+        activeTab = tab;
+        localStorage.setItem('activeYtTab', tab);
+        
+        const btnTabSpotifyToYt = document.getElementById('btn-tab-spotify-to-yt');
+        const btnTabYtToSpotify = document.getElementById('btn-tab-yt-to-spotify');
+        const btnTabYtMerge = document.getElementById('btn-tab-yt-merge');
+        const btnTabYtCopy = document.getElementById('btn-tab-yt-copy');
+        
+        const panelSpotify = document.getElementById('panel-spotify-to-yt');
+        const panelYt = document.getElementById('panel-yt-to-spotify');
+        const panelMerge = document.getElementById('panel-yt-merge');
+        const panelCopy = document.getElementById('panel-yt-copy');
+        
+        // Deactivate all buttons
+        if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.remove('active');
+        if (btnTabYtToSpotify) btnTabYtToSpotify.classList.remove('active');
+        if (btnTabYtMerge) btnTabYtMerge.classList.remove('active');
+        if (btnTabYtCopy) btnTabYtCopy.classList.remove('active');
+        
+        // Deactivate all panels
+        if (panelSpotify) panelSpotify.classList.remove('active');
+        if (panelYt) panelYt.classList.remove('active');
+        if (panelMerge) panelMerge.classList.remove('active');
+        if (panelCopy) panelCopy.classList.remove('active');
+        
+        if (tab === 'spotify-to-yt') {
+            if (btnTabSpotifyToYt) btnTabSpotifyToYt.classList.add('active');
+            if (panelSpotify) panelSpotify.classList.add('active');
+        } else if (tab === 'yt-to-spotify') {
+            if (btnTabYtToSpotify) btnTabYtToSpotify.classList.add('active');
+            if (panelYt) panelYt.classList.add('active');
+            
+            // Dynamic fetch of Spotify playlists if not loaded yet
+            if (ytState.playlists.length === 0 && appState.spotifyAuthorized) {
+                loadSpotifyPlaylists();
+            }
+        } else if (tab === 'yt-merge') {
+            if (btnTabYtMerge) btnTabYtMerge.classList.add('active');
+            if (panelMerge) panelMerge.classList.add('active');
+            populateMergePlaylistsList();
+        } else if (tab === 'yt-copy') {
+            if (btnTabYtCopy) btnTabYtCopy.classList.add('active');
+            if (panelCopy) panelCopy.classList.add('active');
+            populateCopyPlaylistsDropdown();
+            checkSecondaryAccountStatus();
+        }
+    };
+    
+    if (isInitial || !wrapper) {
+        runSwitch();
+        return;
+    }
+    
+    if (wrapper) {
+        // Reset wrapper to clean state before measuring (cancel any in-progress transition)
+        wrapper.style.transition = 'none';
+        wrapper.style.height = 'auto';
+        wrapper.style.overflow = 'visible';
+        
+        // Measure the current height before switching
+        const startHeight = wrapper.offsetHeight;
+        
+        runSwitch();
+        
+        // Measure the new target height
+        const endHeight = wrapper.offsetHeight;
+        
+        if (endHeight < startHeight) {
+            // Panel is SHRINKING: animate the height reduction quickly
+            wrapper.style.height = startHeight + 'px';
+            wrapper.style.overflow = 'hidden';
+            
+            // Force reflow
+            wrapper.offsetHeight;
+            
+            // Fast shrink transition (0.5s) — the slow 2.5s panelFadeIn handles content appearance
+            wrapper.style.transition = 'height 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
+            wrapper.style.height = endHeight + 'px';
+            
+            // After transition, clear inline styling to let options overflow naturally
+            tabTransitionTimeout = setTimeout(() => {
+                wrapper.style.height = 'auto';
+                wrapper.style.transition = 'none';
+                wrapper.style.overflow = 'visible';
+                tabTransitionTimeout = null;
+            }, 500);
+        }
+        // Panel is GROWING or same size: no height transition needed,
+        // panelFadeIn CSS animation handles the visual effect
+    } else {
+        runSwitch();
     }
 }
 
@@ -2352,8 +2527,9 @@ async function loadSpotifyPlaylists() {
     const warningBanner = document.getElementById('yt-premium-warning-banner');
     if (!select) return;
     select.innerHTML = '<option value="">Chargement des playlists...</option>';
+    refreshCustomSelect(select);
     try {
-        const res = await fetch('/api/spotify/playlists');
+        const res = await fetch(`/api/spotify/playlists?t=${Date.now()}`);
         const data = await res.json();
         
         if (data.success) {
@@ -2367,6 +2543,7 @@ async function loadSpotifyPlaylists() {
             });
             
             select.innerHTML = html;
+            refreshCustomSelect(select);
             handleSpotifyDestPlaylistSelectChange();
         } else {
             toggleYtSpotifyBlockedState(true);
@@ -2374,6 +2551,7 @@ async function loadSpotifyPlaylists() {
             select.innerHTML = isExpired 
                 ? '<option value="">⚠️ Jeton expiré (à renouveler)</option>'
                 : '<option value="">⚠️ API Bloquée (Spotify Premium requis)</option>';
+            refreshCustomSelect(select);
             if (warningBanner) {
                 const p = warningBanner.querySelector('p');
                 if (isExpired && p) {
@@ -2384,6 +2562,7 @@ async function loadSpotifyPlaylists() {
     } catch (e) {
         toggleYtSpotifyBlockedState(true);
         select.innerHTML = '<option value="">⚠️ Erreur de connexion API</option>';
+        refreshCustomSelect(select);
     }
 }
 
@@ -3544,7 +3723,7 @@ async function checkSecondaryAccountStatus() {
     const secondaryText = document.getElementById('yt-secondary-account-info-text');
     
     try {
-        const res = await fetch('/api/status');
+        const res = await fetch(`/api/status?t=${Date.now()}`);
         const data = await res.json();
         if (data.ytMusicSecondaryConfigured) {
             if (data.ytSecondaryAccount) {
@@ -3652,11 +3831,13 @@ function populateMergePlaylistsList() {
 }
 
 function populateCopyPlaylistsDropdown() {
+    console.log(`[populateCopyPlaylistsDropdown] Populating with ${appState.playlists.length} playlists.`);
     const sourceSelect = document.getElementById('yt-copy-source-select');
     if (!sourceSelect) return;
     
     if (appState.playlists.length === 0) {
         sourceSelect.innerHTML = '<option value="">Aucune playlist chargée</option>';
+        refreshCustomSelect(sourceSelect);
         return;
     }
     
@@ -3665,6 +3846,7 @@ function populateCopyPlaylistsDropdown() {
         html += `<option value="${p.id}">${p.title}</option>`;
     });
     sourceSelect.innerHTML = html;
+    refreshCustomSelect(sourceSelect);
     
     const checkboxOtherAccount = document.getElementById('yt-copy-use-other-account');
     if (checkboxOtherAccount && checkboxOtherAccount.checked) {
@@ -3704,6 +3886,7 @@ function populateCopyPlaylistsDropdownDestPrimary() {
         html += `<option value="${p.id}">${p.title}</option>`;
     });
     destSelect.innerHTML = html;
+    refreshCustomSelect(destSelect);
     
     updateDestInputVisibility(destSelect.value);
 }
@@ -3713,9 +3896,10 @@ async function populateCopyPlaylistsDropdownDestSecondary() {
     if (!destSelect) return;
     
     destSelect.innerHTML = '<option value="">Chargement des playlists...</option>';
+    refreshCustomSelect(destSelect);
     
     try {
-        const res = await fetch('/api/ytmusic/secondary/playlists');
+        const res = await fetch(`/api/ytmusic/secondary/playlists?t=${Date.now()}`);
         const data = await res.json();
         if (data.success && data.playlists) {
             let html = '<option value="__new__">➕ [Créer une nouvelle playlist]</option>';
@@ -3725,11 +3909,14 @@ async function populateCopyPlaylistsDropdownDestSecondary() {
                 html += `<option value="${p.id}">${p.title}</option>`;
             });
             destSelect.innerHTML = html;
+            refreshCustomSelect(destSelect);
         } else {
             destSelect.innerHTML = '<option value="__new__">➕ [Créer une nouvelle playlist] (Erreur chargement playlists)</option>';
+            refreshCustomSelect(destSelect);
         }
     } catch (e) {
         destSelect.innerHTML = '<option value="__new__">➕ [Créer une nouvelle playlist] (Erreur communication)</option>';
+        refreshCustomSelect(destSelect);
     }
     
     updateDestInputVisibility(destSelect.value);
@@ -3905,6 +4092,8 @@ async function executeYtCopy() {
     const newNameInput = document.getElementById('yt-copy-new-name');
     const useSecondary = document.getElementById('yt-copy-use-other-account').checked;
     const skipDuplicates = document.getElementById('yt-copy-skip-duplicates').checked;
+    const optimizeAudio = document.getElementById('yt-copy-optimize-audio')?.checked || false;
+    const reverseOrder = document.getElementById('yt-copy-reverse-order')?.checked || false;
     const progressCard = document.getElementById('yt-copy-progress-card');
     const consoleLog = document.getElementById('yt-copy-console-log');
     const statusAlert = document.getElementById('yt-copy-status-alert');
@@ -3981,7 +4170,7 @@ async function executeYtCopy() {
     const startTime = Date.now();
     
     // Start EventSource
-    const eventSourceUrl = `/api/ytmusic/copy-playlist-stream?sourcePlaylistId=${sourcePlaylistId}&destPlaylistId=${destPlaylistId}&destPlaylistName=${encodeURIComponent(destPlaylistName)}&useSecondaryAccount=${useSecondary}&skipDuplicates=${skipDuplicates}`;
+    const eventSourceUrl = `/api/ytmusic/copy-playlist-stream?sourcePlaylistId=${sourcePlaylistId}&destPlaylistId=${destPlaylistId}&destPlaylistName=${encodeURIComponent(destPlaylistName)}&useSecondaryAccount=${useSecondary}&skipDuplicates=${skipDuplicates}&optimizeAudio=${optimizeAudio}&reverseOrder=${reverseOrder}`;
     const source = new EventSource(eventSourceUrl);
     
     source.addEventListener('info', (event) => {
@@ -4001,10 +4190,11 @@ async function executeYtCopy() {
         log(data.message, 'info');
         
         // Calculate ETA
-        if (data.added > 0) {
+        const processed = data.added + (data.failed || 0);
+        if (processed > 0) {
             const elapsedMs = Date.now() - startTime;
-            const tracksPerMs = data.added / elapsedMs;
-            const remainingTracks = data.total - data.added;
+            const tracksPerMs = processed / elapsedMs;
+            const remainingTracks = data.total - data.added - (data.failed || 0);
             const remainingMs = remainingTracks / tracksPerMs;
             
             if (remainingTracks <= 0) {
@@ -4028,12 +4218,13 @@ async function executeYtCopy() {
         const data = JSON.parse(event.data);
         source.close();
         
-        document.getElementById('yt-copy-progress-counter').textContent = `${data.total} / ${data.total}`;
+        const displayTotal = data.total + (data.failed || 0);
+        document.getElementById('yt-copy-progress-counter').textContent = `${displayTotal} / ${displayTotal}`;
         document.getElementById('yt-copy-progress-bar-fill').style.width = '100%';
         document.getElementById('yt-copy-progress-percent').textContent = '100%';
         document.getElementById('yt-copy-progress-eta').textContent = 'Terminé';
         document.getElementById('yt-copy-stat-added').textContent = data.total;
-        document.getElementById('yt-copy-stat-total').textContent = data.total;
+        document.getElementById('yt-copy-stat-total').textContent = displayTotal;
         document.getElementById('yt-copy-stat-skipped').textContent = data.duplicatesSkipped || 0;
         
         // Show success alert
@@ -4041,7 +4232,16 @@ async function executeYtCopy() {
         statusAlert.style.background = 'rgba(29, 185, 84, 0.15)';
         statusAlert.style.border = '1px solid #1db954';
         statusAlert.style.color = '#1db954';
-        statusAlert.innerHTML = `<span>🎉 <strong>Opération terminée avec succès !</strong> La playlist a été copiée avec ${data.total} titres (et ${data.duplicatesSkipped || 0} doublons ignorés).</span>`;
+        
+        let alertMsg = `🎉 <strong>Opération terminée !</strong> ${data.total} titre(s) copié(s)`;
+        if (data.failed > 0) {
+            alertMsg += ` (${data.failed} échec(s))`;
+        }
+        if (data.duplicatesSkipped > 0) {
+            alertMsg += ` et ${data.duplicatesSkipped} doublon(s) ignoré(s)`;
+        }
+        alertMsg += '.';
+        statusAlert.innerHTML = `<span>${alertMsg}</span>`;
         
         log(`Copie réussie ! ID Playlist destination : ${data.playlistId}`, 'success');
         log(`${data.total} titres copiés dans l'ordre original.`, 'success');
@@ -4087,7 +4287,7 @@ async function loadYtProfiles() {
     if (!primarySelect || !secondarySelect || !primaryContainer || !secondaryContainer) return;
     
     try {
-        const res = await fetch('/api/ytmusic/profiles');
+        const res = await fetch(`/api/ytmusic/profiles?t=${Date.now()}`);
         const data = await res.json();
         if (data.success && data.profiles) {
             const profiles = data.profiles;
@@ -4107,6 +4307,9 @@ async function loadYtProfiles() {
                 
                 primarySelect.value = data.activePrimaryId || '';
                 secondarySelect.value = data.activeSecondaryId || '';
+                
+                refreshCustomSelect(primarySelect);
+                refreshCustomSelect(secondarySelect);
             } else {
                 primaryContainer.style.display = 'none';
                 secondaryContainer.style.display = 'none';
@@ -4119,6 +4322,7 @@ async function loadYtProfiles() {
 
 async function selectYtProfile(profileId, target) {
     if (!profileId) return;
+    console.log(`[selectYtProfile] Selected profile ID: ${profileId} for target: ${target}`);
     try {
         const res = await fetch('/api/ytmusic/profiles/select', {
             method: 'POST',
@@ -4127,6 +4331,7 @@ async function selectYtProfile(profileId, target) {
         });
         const data = await res.json();
         if (data.success) {
+            console.log(`[selectYtProfile] Success. Target: ${target}`);
             if (target === 'primary') {
                 await checkStatus();
                 await loadYtProfiles();
@@ -4166,6 +4371,173 @@ async function deleteYtProfile(profileId) {
         alert('Erreur de communication : ' + e.message);
     }
 }
+
+// ==========================================
+// CUSTOM PREMIUM DROPDOWN SELECTS
+// ==========================================
+
+function initCustomSelects() {
+    const selectElements = document.querySelectorAll('select');
+    selectElements.forEach(select => {
+        if (select.dataset.customSelectInit) return;
+        select.dataset.customSelectInit = 'true';
+        
+        // Add class to hide native select via CSS
+        select.classList.add('custom-select-hidden');
+        
+        // Create wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'custom-select-wrapper';
+        if (select.id) wrapper.id = 'wrapper-' + select.id;
+        
+        // Propagate layout classes safely
+        if (select.className) {
+            const classes = select.className.split(/\s+/).filter(c => c.trim() !== '' && c !== 'custom-select' && c !== 'custom-select-hidden');
+            if (classes.length > 0) {
+                wrapper.classList.add(...classes);
+            }
+        }
+        
+        // Sync wrapper visibility to match native select's inline style
+        function syncWrapperVisibility() {
+            if (select.style.display === 'none') {
+                wrapper.style.display = 'none';
+            } else {
+                wrapper.style.display = '';
+            }
+        }
+        
+        syncWrapperVisibility();
+        
+        select.parentNode.insertBefore(wrapper, select);
+        wrapper.appendChild(select);
+        
+        const trigger = document.createElement('div');
+        trigger.className = 'custom-select-trigger';
+        wrapper.appendChild(trigger);
+        
+        const optionsContainer = document.createElement('div');
+        optionsContainer.className = 'custom-select-options';
+        wrapper.appendChild(optionsContainer);
+        
+        // Build option items dynamically
+        function rebuildOptions() {
+            optionsContainer.innerHTML = '';
+            
+            Array.from(select.options).forEach(opt => {
+                const optEl = document.createElement('div');
+                optEl.className = 'custom-option';
+                optEl.dataset.value = opt.value;
+                
+                // Colorize special setup action items to stand out beautifully
+                if (opt.textContent.includes('➕') || opt.textContent.includes('✏️')) {
+                    optEl.style.color = 'var(--accent-purple)';
+                    optEl.style.fontWeight = '700';
+                    optEl.style.borderTop = '1px solid rgba(255,255,255,0.03)';
+                } else if (opt.textContent.includes('👍') || opt.textContent.includes('Titres Likés') || opt.textContent.includes('Liked Music') || opt.textContent.includes('Titres likés')) {
+                    optEl.style.color = 'var(--youtube-red)';
+                    optEl.style.fontWeight = '600';
+                }
+                
+                optEl.textContent = opt.textContent;
+                
+                if (opt.selected) {
+                    optEl.classList.add('selected');
+                    trigger.textContent = opt.textContent;
+                }
+                
+                optEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    select.value = opt.value;
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    
+                    wrapper.querySelectorAll('.custom-option').forEach(el => el.classList.remove('selected'));
+                    optEl.classList.add('selected');
+                    trigger.textContent = opt.textContent;
+                    wrapper.classList.remove('open');
+                });
+                
+                optionsContainer.appendChild(optEl);
+            });
+            
+            if (select.selectedIndex !== -1 && select.options[select.selectedIndex]) {
+                trigger.textContent = select.options[select.selectedIndex].textContent;
+            } else {
+                trigger.textContent = select.placeholder || '-- Sélectionner --';
+            }
+        }
+        
+        rebuildOptions();
+        select.rebuildCustomOptions = rebuildOptions;
+        
+        // Click to open/close
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = wrapper.classList.contains('open');
+            document.querySelectorAll('.custom-select-wrapper').forEach(w => w.classList.remove('open'));
+            if (!isOpen) wrapper.classList.add('open');
+        });
+        
+        // Watch for raw DOM option changes AND inline style attribute changes
+        const observer = new MutationObserver((mutations) => {
+            let optionsChanged = false;
+            let visibilityChanged = false;
+            
+            mutations.forEach(m => {
+                if (m.type === 'childList' || m.type === 'characterData') {
+                    optionsChanged = true;
+                } else if (m.type === 'attributes' && m.attributeName === 'style') {
+                    visibilityChanged = true;
+                }
+            });
+            
+            if (optionsChanged) rebuildOptions();
+            if (visibilityChanged) syncWrapperVisibility();
+        });
+        observer.observe(select, { 
+            childList: true, 
+            characterData: true, 
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style']
+        });
+        
+        // Monitor manual script select.value adjustments (e.g. setting selectedIndex/value programmatically)
+        setInterval(() => {
+            let currentText = '';
+            if (select.selectedIndex !== -1 && select.options[select.selectedIndex]) {
+                currentText = select.options[select.selectedIndex].textContent;
+            } else {
+                currentText = select.placeholder || '-- Sélectionner --';
+            }
+            
+            if (trigger.textContent !== currentText) {
+                trigger.textContent = currentText;
+                wrapper.querySelectorAll('.custom-option').forEach(el => {
+                    if (el.dataset.value === select.value) {
+                        el.classList.add('selected');
+                    } else {
+                        el.classList.remove('selected');
+                    }
+                });
+            }
+        }, 150);
+    });
+}
+
+// Global click handler to close open dropdowns
+document.addEventListener('click', () => {
+    document.querySelectorAll('.custom-select-wrapper').forEach(w => w.classList.remove('open'));
+});
+
+// Helper to explicitly refresh custom select representation when underlying native select is programmatically changed
+function refreshCustomSelect(select) {
+    const target = typeof select === 'string' ? document.getElementById(select) : select;
+    if (target && typeof target.rebuildCustomOptions === 'function') {
+        target.rebuildCustomOptions();
+    }
+}
+
 
 
 

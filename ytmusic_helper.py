@@ -115,6 +115,7 @@ def main():
                 
                 formatted_tracks.append({
                     "videoId": t.get("videoId"),
+                    "videoType": t.get("videoType", ""),
                     "title": t.get("title"),
                     "artist": artist_name,
                     "album": album_name,
@@ -177,63 +178,125 @@ def main():
                 return
                 
             # Add to playlist. Appends to the end.
+            import time
+            optimize_audio = req.get("optimize_audio", False)
+            tracks_info = req.get("tracks_info", [])
+            
+            def clean_title(title):
+                """Remove common suffixes from title for comparison."""
+                if not title:
+                    return ""
+                t = title.lower().strip()
+                for suffix in ['(official video)', '(official music video)', '(lyrics)', 
+                               '(audio)', '(clip officiel)', '(official)', '(hd)', '(hq)',
+                               '(visualizer)', '(lyric video)', '(music video)', '[official video]',
+                               '[official music video]', '(visualiser)', '(official audio)']:
+                    t = t.replace(suffix, '').strip()
+                return t
+            
+            def find_audio_version(yt_inst, video_id, title, artist):
+                """Search for the audio-only version of a music video. Returns audioVideoId or original."""
+                try:
+                    query = f"{title} {artist}"
+                    results = yt_inst.search(query, filter="songs", limit=5)
+                    clean_src = clean_title(title)
+                    artist_parts = [p.strip().lower() for p in artist.split(",")]
+                    
+                    for r in results:
+                        r_title = clean_title(r.get("title", ""))
+                        r_artists = [a.get("name", "").lower().strip() for a in r.get("artists", [])]
+                        
+                        # Check title similarity
+                        title_match = (clean_src == r_title or clean_src in r_title or r_title in clean_src)
+                        # Check artist match  
+                        artist_match = any(
+                            ap in ra or ra in ap
+                            for ap in artist_parts
+                            for ra in r_artists
+                        )
+                        
+                        if title_match and artist_match:
+                            return r.get("videoId", video_id)
+                    
+                    return video_id  # No match found, keep original
+                except Exception:
+                    return video_id  # On error, keep original
+            
+            converted_count = 0
+            final_ids = []
+            
+            # Resolve audio versions if optimize_audio is enabled
+            if optimize_audio and tracks_info:
+                for t_info in tracks_info:
+                    vid = t_info.get("videoId")
+                    vtype = t_info.get("videoType", "")
+                    title = t_info.get("title", "")
+                    artist = t_info.get("artist", "")
+                    
+                    if vtype in ("MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_UGC"):
+                        audio_vid = find_audio_version(yt, vid, title, artist)
+                        if audio_vid != vid:
+                            converted_count += 1
+                        final_ids.append(audio_vid)
+                        time.sleep(0.1)  # Small delay for search API
+                    else:
+                        final_ids.append(vid)
+            else:
+                final_ids = list(video_ids)
+                
             if playlist_id == "LM":
-                import time
-                import threading
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                
-                # Thread-local storage for YTMusic instances
-                thread_local = threading.local()
-                
-                def get_yt_instance():
-                    if not hasattr(thread_local, 'yt'):
-                        thread_local.yt = YTMusic(auth_path)
-                    return thread_local.yt
-                
-                def rate_single_song_like(video_id):
-                    """Rate a single song with LIKE with retry logic. Returns (video_id, success)."""
-                    yt_thread = get_yt_instance()
-                    for attempt in range(3):
+                def rate_with_retry(yt_inst, video_id, index, total):
+                    """Rate a single song with LIKE with retry logic."""
+                    for attempt in range(5):
                         try:
-                            yt_thread.rate_song(video_id, 'LIKE')
-                            return (video_id, True)
+                            yt_inst.rate_song(video_id, 'LIKE')
+                            return True
                         except Exception as e:
-                            if attempt == 2:
-                                print(f"Failed to rate song {video_id} after 3 attempts: {e}", file=sys.stderr)
-                                return (video_id, False)
-                            else:
-                                time.sleep(1 * (attempt + 1))
-                    return (video_id, False)
+                            if attempt == 4:
+                                print(f"Failed to rate {video_id} ({index}/{total}) after 5 attempts: {e}", file=sys.stderr)
+                                return False
+                            wait_time = 2 * (attempt + 1)
+                            print(f"Retry {attempt+1}/5 for {video_id}: {e}, waiting {wait_time}s...", file=sys.stderr)
+                            time.sleep(wait_time)
+                    return False
                 
                 success_count = 0
                 failed_ids = []
                 
-                # To preserve chronological order as much as possible, we reverse the batch
-                # (so the oldest songs are submitted first).
-                ordered_video_ids = list(video_ids)
-                ordered_video_ids.reverse()
-                
-                # Process likes in parallel with a safe concurrency limit of 4 workers
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    futures = {executor.submit(rate_single_song_like, vid): vid for vid in ordered_video_ids}
+                # Like each track sequentially
+                for i, vid in enumerate(final_ids):
+                    ok = rate_with_retry(yt, vid, i + 1, len(final_ids))
+                    if ok:
+                        success_count += 1
+                    else:
+                        failed_ids.append(vid)
                     
-                    for future in as_completed(futures):
-                        vid, ok = future.result()
-                        if ok:
-                            success_count += 1
-                        else:
-                            failed_ids.append(vid)
+                    # Small delay between likes to avoid rate limiting
+                    if i < len(final_ids) - 1:
+                        time.sleep(0.5)
                 
                 status = {
-                    "status": "STATUS_SUCCEEDED",
+                    "status": "STATUS_SUCCEEDED" if len(failed_ids) == 0 else "STATUS_PARTIAL",
                     "added": success_count,
                     "failed": len(failed_ids),
-                    "failed_ids": failed_ids
+                    "failed_ids": failed_ids,
+                    "converted": converted_count
                 }
             else:
-                status = yt.add_playlist_items(playlist_id, video_ids, duplicates=duplicates)
+                status = yt.add_playlist_items(playlist_id, final_ids, duplicates=duplicates)
                 if isinstance(status, dict) and status.get("status") == "STATUS_FAILED":
                     raise Exception(f"YouTube Music returned STATUS_FAILED. Response: {status}")
+                
+                if isinstance(status, dict):
+                    status["converted"] = converted_count
+                    status["added"] = len(final_ids)
+                else:
+                    status = {
+                        "status": status,
+                        "added": len(final_ids),
+                        "failed": 0,
+                        "converted": converted_count
+                    }
             print(json.dumps({"success": True, "status": status}))
             
         elif action == "get_liked_tracks":
@@ -285,48 +348,39 @@ def main():
                 return
                 
             import time
-            import threading
-            from concurrent.futures import ThreadPoolExecutor, as_completed
             
-            # Thread-local storage for YTMusic instances
-            thread_local = threading.local()
-            
-            def get_yt_instance():
-                if not hasattr(thread_local, 'yt'):
-                    thread_local.yt = YTMusic(auth_path)
-                return thread_local.yt
-            
-            def rate_single_song_indifferent(video_id):
-                """Rate a single song with INDIFFERENT with retry logic. Returns (video_id, success)."""
-                yt_thread = get_yt_instance()
-                for attempt in range(3):
+            def rate_single_song_indifferent(video_id, index, total):
+                """Rate a single song with INDIFFERENT with retry logic."""
+                for attempt in range(5):
                     try:
-                        yt_thread.rate_song(video_id, 'INDIFFERENT')
-                        return (video_id, True)
+                        yt.rate_song(video_id, 'INDIFFERENT')
+                        return True
                     except Exception as e:
-                        if attempt == 2:
-                            print(f"Failed to unlike song {video_id} after 3 attempts: {e}", file=sys.stderr)
-                            return (video_id, False)
-                        else:
-                            time.sleep(1 * (attempt + 1))
-                return (video_id, False)
+                        if attempt == 4:
+                            print(f"Failed to unlike song {video_id} ({index}/{total}) after 5 attempts: {e}", file=sys.stderr)
+                            return False
+                        wait_time = 2 * (attempt + 1)
+                        print(f"Retry {attempt+1}/5 for unliking {video_id}: {e}, waiting {wait_time}s...", file=sys.stderr)
+                        time.sleep(wait_time)
+                return False
             
             success_count = 0
             failed_ids = []
             
-            # Process unlikes in parallel with a safe concurrency limit of 3 workers
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                futures = {executor.submit(rate_single_song_indifferent, vid): vid for vid in video_ids}
+            # Unlike each track sequentially
+            for i, vid in enumerate(video_ids):
+                ok = rate_single_song_indifferent(vid, i + 1, len(video_ids))
+                if ok:
+                    success_count += 1
+                else:
+                    failed_ids.append(vid)
                 
-                for future in as_completed(futures):
-                    vid, ok = future.result()
-                    if ok:
-                        success_count += 1
-                    else:
-                        failed_ids.append(vid)
+                # Small delay between unlikes to avoid rate limiting
+                if i < len(video_ids) - 1:
+                    time.sleep(0.1)
             
             status = {
-                "status": "STATUS_SUCCEEDED",
+                "status": "STATUS_SUCCEEDED" if len(failed_ids) == 0 else "STATUS_PARTIAL",
                 "unliked": success_count,
                 "failed": len(failed_ids),
                 "failed_ids": failed_ids

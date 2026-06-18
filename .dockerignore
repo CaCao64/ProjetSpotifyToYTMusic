@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+data/browser.json
+data/browser_secondary.json
+data/config.json
+data/profiles/*
+.git
+.gitignore
+scratch/
+.system_generated/
+walkthrough.md
+task.md
+implementation_plan.md

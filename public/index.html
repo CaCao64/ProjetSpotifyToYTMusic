@@ -332,6 +332,22 @@
                     <div id="yt-tools-section" style="display: none; margin-bottom: 1rem;">
                         <span style="font-size: 0.8rem; font-weight: 600; display: block; margin-bottom: 0.35rem;">Option 1 : Via l'API locale (Recommandé)</span>
                         <button class="btn btn-secondary" id="btn-clear-liked" style="background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.25); color: var(--danger); font-size: 0.8rem; padding: 0.6rem 1.2rem; width: auto; font-weight: 600; text-transform: none; box-shadow: none;">Supprimer les titres likés</button>
+                        
+                        <!-- Deletion Progress Card -->
+                        <div class="progress-card" id="yt-clear-progress-card" style="display: none; margin-top: 1.25rem; border-radius: 0.75rem; background: var(--bg-card); border: 1px solid var(--border-color); padding: 1.25rem;">
+                            <div class="progress-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                                <span class="progress-title" id="yt-clear-progress-title" style="font-weight: 700; font-size: 0.95rem; color: var(--text-primary); font-family: var(--font-display);">Suppression en cours...</span>
+                                <span id="yt-clear-progress-counter" style="font-weight: 600; font-size: 0.85rem; color: var(--youtube-red);">0 / 0</span>
+                            </div>
+                            <div class="progress-bar-container" style="background: rgba(255,255,255,0.08); border-radius: 10px; height: 10px; overflow: hidden; margin-bottom: 0.75rem; border: 1px solid rgba(255,255,255,0.03);">
+                                <div class="progress-bar-fill" id="yt-clear-progress-bar-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #ef4444, #f87171); transition: width 0.3s ease; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);"></div>
+                            </div>
+                            <div class="progress-info-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 1rem; font-weight: 500;">
+                                <span id="yt-clear-progress-eta">Calcul du temps restant...</span>
+                                <span id="yt-clear-progress-percent">0%</span>
+                            </div>
+                            <div class="console-log" id="yt-clear-console-log" style="height: 120px; overflow-y: auto; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 0.5rem; font-family: monospace; font-size: 0.7rem; padding: 0.5rem; color: #a6adbb; line-height: 1.4;"></div>
+                        </div>
                     </div>
                     
                     <!-- Option 2 : Browser console script (always shown) -->
@@ -406,7 +422,7 @@
                 </div>
 
                 <!-- Section Alternative Sans Premium : YTM -> Spotify -->
-                <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+                <div style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
                     <h3 style="font-family: var(--font-display); font-size: 1.05rem; margin-bottom: 0.5rem; color: var(--youtube-red);">⚡ Option alternative : Sans Premium</h3>
                     <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
                         Si vous n'avez pas d'abonnement Premium pour Spotify, vous pouvez transférer vos titres gratuitement en exécutant notre script sur le Web Player de Spotify.
@@ -985,8 +1001,10 @@
                 <button class="btn btn-secondary" id="btn-tab-yt-copy" style="width: auto; padding: 0.6rem 1.5rem; border-radius: 0.5rem; text-transform: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem;"><img src="Youtube_Music_icon.ico" class="yt-logo-icon" alt="YTM"> Copier YTM ➔ YTM</button>
             </div>
 
-            <!-- Panel 1: Spotify -> YouTube Music -->
-            <div id="panel-spotify-to-yt" class="tab-panel active">
+            <!-- Tab Panels Wrapper for smooth sliding height transition -->
+            <div id="tab-panels-wrapper" class="tab-panels-wrapper">
+                <!-- Panel 1: Spotify -> YouTube Music -->
+                <div id="panel-spotify-to-yt" class="tab-panel active">
                 <!-- Warning Banner if Spotify API fails (No Premium) -->
                 <div class="premium-warning-banner" id="spotify-premium-warning-banner" style="display: none;">
                     <h4>⚠️ API Spotify Bloquée (Spotify Premium requis ou identifiants restreints)</h4>
@@ -1113,7 +1131,7 @@
                         </div>
                         
                         <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
-                            <input type="checkbox" id="filter-only-red" style="accent-color: var(--danger); width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                            <input type="checkbox" id="filter-only-red" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
                             <label for="filter-only-red" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
                                 🔴 Correspondances faibles / absentes uniquement (&lt; 50%)
                             </label>
@@ -1273,7 +1291,7 @@
                         </div>
                         
                         <div class="filter-group" style="display: flex; align-items: center; gap: 0.5rem;">
-                            <input type="checkbox" id="yt-filter-only-red" style="accent-color: var(--danger); width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                            <input type="checkbox" id="yt-filter-only-red" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
                             <label for="yt-filter-only-red" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem;">
                                 🔴 Correspondances faibles / absentes uniquement (&lt; 50%)
                             </label>
@@ -1440,9 +1458,19 @@
                             
                             <h3 style="font-size: 1rem; font-family: var(--font-display); font-weight: 700; margin-bottom: 0.25rem;">2. Paramètres de copie :</h3>
                             
-                            <div class="switch-group" style="display: flex; align-items: center; gap: 0.5rem;">
-                                <input type="checkbox" id="yt-copy-skip-duplicates" checked style="width: 1.1rem; height: 1.1rem;">
-                                <label for="yt-copy-skip-duplicates" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">🔄 Éviter les doublons lors de la copie</label>
+                            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                <div class="switch-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="checkbox" id="yt-copy-skip-duplicates" checked style="width: 1.1rem; height: 1.1rem;">
+                                    <label for="yt-copy-skip-duplicates" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">🔄 Éviter les doublons lors de la copie</label>
+                                </div>
+                                <div class="switch-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="checkbox" id="yt-copy-optimize-audio" style="width: 1.1rem; height: 1.1rem;">
+                                    <label for="yt-copy-optimize-audio" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">🎵 Optimiser pour l'audio (Clip ➔ Musique)</label>
+                                </div>
+                                <div class="switch-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="checkbox" id="yt-copy-reverse-order" style="width: 1.1rem; height: 1.1rem;">
+                                    <label for="yt-copy-reverse-order" style="font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">⇅ Inverser l'ordre des titres</label>
+                                </div>
                             </div>
                             
                             <button class="btn btn-yt" id="btn-execute-yt-copy" style="margin-top: 1rem; text-transform: none; font-size: 0.9rem; padding: 0.75rem 1.5rem; font-weight: 700; border-radius: 0.5rem; cursor: pointer;">📋 Lancer la copie dans l'ordre</button>
@@ -1484,6 +1512,7 @@
                     
                     <div class="console-log" id="yt-copy-console-log" style="height: 140px; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; border-radius: 0.5rem; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); overflow-y: auto;"></div>
                 </div>
+            </div>
             </div>
         </div>
         </div>

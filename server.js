@@ -20,6 +20,15 @@ if (!fs.existsSync(CONFIG_DIR)) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Disable caching for all API endpoints to prevent stale profiles/playlists
+app.use('/api', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+    next();
+});
+
 // Helper: Load configuration
 function loadConfig() {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -460,19 +469,23 @@ app.post('/api/ytmusic/profiles/select', async (req, res) => {
     }
     
     try {
+        console.log(`[API profiles/select] Selecting profile ${profileId} for target ${target}...`);
         if (target === 'primary') {
             fs.copyFileSync(profilePath, YT_AUTH_PATH);
             config.activePrimaryProfileId = profileId;
             saveConfig(config);
             await getOrFetchYtAccount(true);
+            console.log(`[API profiles/select] Primary profile set to ${profileId} (channel: ${profile.accountName})`);
         } else {
             fs.copyFileSync(profilePath, YT_AUTH_PATH_SECONDARY);
             config.activeSecondaryProfileId = profileId;
             saveConfig(config);
             await getOrFetchYtSecondaryAccount(true);
+            console.log(`[API profiles/select] Secondary profile set to ${profileId} (channel: ${profile.accountName})`);
         }
         res.json({ success: true });
     } catch (e) {
+        console.error(`[API profiles/select] Error:`, e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -776,12 +789,15 @@ app.post('/api/ytmusic/search-track', async (req, res) => {
 // API: Get Playlists
 app.get('/api/ytmusic/playlists', async (req, res) => {
     try {
+        console.log(`[API GET /api/ytmusic/playlists] Loading playlists using ${YT_AUTH_PATH}...`);
         const response = await runPythonHelper({
             action: 'get_playlists',
             auth_path: YT_AUTH_PATH
         });
+        console.log(`[API GET /api/ytmusic/playlists] Found ${response.playlists.length} playlists.`);
         res.json({ success: true, playlists: response.playlists });
     } catch (e) {
+        console.error(`[API GET /api/ytmusic/playlists] Error loading playlists:`, e);
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -1094,7 +1110,7 @@ app.get('/api/ytmusic/merge-playlists-stream', async (req, res) => {
 
 // API: Copy YTM Playlist via Server-Sent Events (SSE)
 app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
-    const { sourcePlaylistId, destPlaylistId, destPlaylistName, useSecondaryAccount: useSecStr, skipDuplicates: skipDupStr } = req.query;
+    const { sourcePlaylistId, destPlaylistId, destPlaylistName, useSecondaryAccount: useSecStr, skipDuplicates: skipDupStr, optimizeAudio: optAudStr, reverseOrder: revOrdStr } = req.query;
     
     if (!sourcePlaylistId || !destPlaylistId) {
         return res.status(400).send('Missing sourcePlaylistId or destPlaylistId parameters');
@@ -1102,6 +1118,8 @@ app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
     
     const useSecondaryAccount = useSecStr === 'true';
     const skipDuplicates = skipDupStr === 'true';
+    const optimizeAudio = optAudStr === 'true';
+    const reverseOrder = revOrdStr === 'true';
     
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -1144,6 +1162,9 @@ app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
             sendEvent('info', { message: `Nouvelle playlist créée (ID: ${resolvedDestPlaylistId})` });
         }
         
+        // Determine if destination is Liked Music
+        const isLikedMusic = resolvedDestPlaylistId === 'LM';
+        
         let existingVideoIds = new Set();
         if (skipDuplicates && destPlaylistId !== '__new__') {
             sendEvent('info', { message: 'Analyse des titres déjà existants dans la destination...' });
@@ -1163,7 +1184,8 @@ app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
             }
         }
         
-        let videoIdsToAdd = [];
+        // Build the list of tracks to add (keep full track objects)
+        let tracksToAdd = [];
         const seenInBatch = new Set();
         let duplicatesCount = 0;
         
@@ -1171,7 +1193,12 @@ app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
             if (t.videoId) {
                 const isDuplicate = skipDuplicates && (existingVideoIds.has(t.videoId) || seenInBatch.has(t.videoId));
                 if (!isDuplicate) {
-                    videoIdsToAdd.push(t.videoId);
+                    tracksToAdd.push({
+                        videoId: t.videoId,
+                        videoType: t.videoType || '',
+                        title: t.title || '',
+                        artist: t.artist || ''
+                    });
                     seenInBatch.add(t.videoId);
                 } else {
                     duplicatesCount++;
@@ -1179,46 +1206,217 @@ app.get('/api/ytmusic/copy-playlist-stream', async (req, res) => {
             }
         }
         
-        sendEvent('info', { message: `${videoIdsToAdd.length} titre(s) à copier (${duplicatesCount} doublon(s) ignoré(s)).` });
+        const totalToAdd = tracksToAdd.length;
+        
+        // Count music video clips for info
+        const clipCount = tracksToAdd.filter(t => 
+            t.videoType === 'MUSIC_VIDEO_TYPE_OMV' || t.videoType === 'MUSIC_VIDEO_TYPE_UGC'
+        ).length;
+        if (optimizeAudio && clipCount > 0) {
+            sendEvent('info', { message: `🎵 ${clipCount} clip(s) vidéo détecté(s) → seront convertis en version audio.` });
+        }
+        sendEvent('info', { message: `${totalToAdd} titre(s) à copier (${duplicatesCount} doublon(s) ignoré(s)).` });
         
         let processedTracks = 0;
-        if (videoIdsToAdd.length > 0) {
-            const batchSize = 100;
-            const batches = [];
-            for (let i = 0; i < videoIdsToAdd.length; i += batchSize) {
-                batches.push(videoIdsToAdd.slice(i, i + batchSize));
-            }
-            
-            for (let b = 0; b < batches.length; b++) {
-                const batch = batches[b];
-                const batchStartIndex = b * batchSize;
-                sendEvent('info', { message: `Copie du lot ${b + 1}/${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+        let totalFailed = 0;
+        
+        if (totalToAdd > 0) {
+            if (isLikedMusic) {
+                // ═══════════════════════════════════════════════════════
+                // LIKED MUSIC PATH: Sequential rate_song with conversion
+                // ═════════════════════════════════════════════════                let likesSequence = [];
+                if (reverseOrder) {
+                    likesSequence = [...tracksToAdd];
+                } else {
+                    likesSequence = [...tracksToAdd].reverse();
+                }
                 
-                await runPythonHelper({
-                    action: 'add_tracks',
-                    auth_path: destAuthPath,
-                    playlist_id: resolvedDestPlaylistId,
-                    video_ids: batch,
-                    duplicates: !skipDuplicates
-                });
+                sendEvent('info', { message: "Note : La destination est 'Titres Likés' (LM). YouTube Music fusionne automatiquement les doublons dans cette liste. Si la source contient des doublons, le nombre final de titres sera inférieur." });
                 
-                processedTracks += batch.length;
-                const progress = Math.min(100, Math.round((processedTracks / videoIdsToAdd.length) * 100));
-                sendEvent('progress', {
-                    added: processedTracks,
-                    total: videoIdsToAdd.length,
-                    percent: progress,
-                    duplicatesSkipped: duplicatesCount,
-                    message: `${processedTracks} sur ${videoIdsToAdd.length} titres copiés.`
-                });
+                const batchSize = 25; // Smaller batches for better progress & reliability
+                const batches = [];
+                for (let i = 0; i < likesSequence.length; i += batchSize) {
+                    batches.push(likesSequence.slice(i, i + batchSize));
+                }
                 
-                if (b < batches.length - 1) {
-                    await new Promise(r => setTimeout(r, 2000));
+                // Process batches in normal order
+                for (let b = 0; b < batches.length; b++) {
+                    const batch = batches[b];
+                    const batchStartIndex = b * batchSize;
+                    sendEvent('info', { message: `Copie du lot ${b + 1}/${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                    
+                    // Retry logic per batch
+                    const maxRetries = 3;
+                    let attempt = 0;
+                    let batchSuccess = false;
+                    let lastResult = null;
+                    let lastError = null;
+                    
+                    while (attempt < maxRetries) {
+                        try {
+                            lastResult = await runPythonHelper({
+                                action: 'add_tracks',
+                                auth_path: destAuthPath,
+                                playlist_id: resolvedDestPlaylistId,
+                                video_ids: batch.map(t => t.videoId),
+                                tracks_info: batch,
+                                duplicates: !skipDuplicates,
+                                optimize_audio: optimizeAudio
+                            });
+                            batchSuccess = true;
+                            break;
+                        } catch (err) {
+                            attempt++;
+                            lastError = err;
+                            sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée pour le lot ${b + 1} : ${err.message}. Nouvel essai dans ${attempt * 3}s...` });
+                            await new Promise(r => setTimeout(r, attempt * 3000));
+                        }
+                    }
+                    
+                    if (!batchSuccess) {
+                        throw new Error(`Impossible de copier le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+                    }
+                    
+                    // Check actual success/failure counts from Python return value
+                    let batchAdded = batch.length;
+                    let batchFailed = 0;
+                    let batchConverted = 0;
+                    const batchStatus = lastResult && lastResult.status;
+                    if (batchStatus) {
+                        batchAdded = batchStatus.added || 0;
+                        batchFailed = batchStatus.failed || 0;
+                        batchConverted = batchStatus.converted || 0;
+                        if (batchFailed > 0) {
+                            sendEvent('info', { message: `⚠️ ${batchFailed} titre(s) du lot ${b + 1} n'ont pas pu être aimés.` });
+                        }
+                        if (batchConverted > 0) {
+                            sendEvent('info', { message: `🎵 ${batchConverted} clip(s) vidéo converti(s) en audio dans ce lot.` });
+                        }
+                    }
+                    
+                    processedTracks += batchAdded;
+                    totalFailed += batchFailed;
+                    const progress = Math.min(100, Math.round(((processedTracks + totalFailed) / totalToAdd) * 100));
+                    sendEvent('progress', {
+                        added: processedTracks,
+                        total: totalToAdd,
+                        percent: progress,
+                        duplicatesSkipped: duplicatesCount,
+                        failed: totalFailed,
+                        message: `${processedTracks} sur ${totalToAdd} titres copiés.`
+                    });
+                    
+                    // Pause between batches
+                    if (b < batches.length - 1) {
+                        await new Promise(r => setTimeout(r, 1500));
+                    }
+                }
+            } else {
+                // ═══════════════════════════════════════════════════════
+                // REGULAR PLAYLIST PATH: Bulk add_playlist_items
+                // ═══════════════════════════════════════════════════════
+                // Regular playlists append to the end.
+                // Desired final order L = tracksToAdd (if reverseOrder is false), or reverse(tracksToAdd) (if reverseOrder is true).
+                // Sequence of additions = L.
+                let addSequence = [];
+                if (reverseOrder) {
+                    addSequence = [...tracksToAdd].reverse();
+                } else {
+                    addSequence = [...tracksToAdd];
+                }
+                
+                const batchSize = 100;
+                const batches = [];
+                for (let i = 0; i < addSequence.length; i += batchSize) {
+                    batches.push(addSequence.slice(i, i + batchSize));
+                }
+                
+                for (let b = 0; b < batches.length; b++) {
+                    const batch = batches[b];
+                    const batchStartIndex = b * batchSize;
+                    sendEvent('info', { message: `Copie du lot ${b + 1}/${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                    
+                    // Retry logic
+                    const maxRetries = 3;
+                    let attempt = 0;
+                    let batchSuccess = false;
+                    let lastResult = null;
+                    let lastError = null;
+                    
+                    while (attempt < maxRetries) {
+                        try {
+                            lastResult = await runPythonHelper({
+                                action: 'add_tracks',
+                                auth_path: destAuthPath,
+                                playlist_id: resolvedDestPlaylistId,
+                                video_ids: batch.map(t => t.videoId),
+                                tracks_info: batch,
+                                duplicates: !skipDuplicates,
+                                optimize_audio: optimizeAudio
+                            });
+                            batchSuccess = true;
+                            break;
+                        } catch (err) {
+                            attempt++;
+                            lastError = err;
+                            sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée pour le lot ${b + 1} : ${err.message}. Nouvel essai dans ${attempt * 3}s...` });
+                            await new Promise(r => setTimeout(r, attempt * 3000));
+                        }
+                    }
+                    
+                    if (!batchSuccess) {
+                        throw new Error(`Impossible de copier le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+                    }
+                    
+                    // Check actual success/failure/conversion counts from Python return value
+                    let batchAdded = batch.length;
+                    let batchFailed = 0;
+                    let batchConverted = 0;
+                    const batchStatus = lastResult && lastResult.status;
+                    if (batchStatus && typeof batchStatus === 'object') {
+                        batchAdded = batchStatus.added || batch.length;
+                        batchFailed = batchStatus.failed || 0;
+                        batchConverted = batchStatus.converted || 0;
+                        if (batchConverted > 0) {
+                            sendEvent('info', { message: `🎵 ${batchConverted} clip(s) vidéo converti(s) en audio dans ce lot.` });
+                        }
+                    }
+                    
+                    processedTracks += batchAdded;
+                    totalFailed += batchFailed;
+                    const progress = Math.min(100, Math.round(((processedTracks + totalFailed) / totalToAdd) * 100));
+                    sendEvent('progress', {
+                        added: processedTracks,
+                        total: totalToAdd,
+                        percent: progress,
+                        duplicatesSkipped: duplicatesCount,
+                        failed: totalFailed,
+                        message: `${processedTracks} sur ${totalToAdd} titres copiés.`
+                    });
+                    
+                    if (b < batches.length - 1) {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
                 }
             }
         }
         
-        sendEvent('success', { message: 'Copie terminée avec succès !', playlistId: resolvedDestPlaylistId, total: videoIdsToAdd.length, duplicatesSkipped: duplicatesCount });
+        let successMsg = `Copie terminée avec succès ! ${processedTracks} titre(s) copié(s)`;
+        if (totalFailed > 0) {
+            successMsg += ` (${totalFailed} échec(s))`;
+        }
+        if (duplicatesCount > 0) {
+            successMsg += ` et ${duplicatesCount} doublon(s) ignoré(s)`;
+        }
+        successMsg += '.';
+        
+        sendEvent('success', { 
+            message: successMsg, 
+            playlistId: resolvedDestPlaylistId, 
+            total: processedTracks, 
+            failed: totalFailed,
+            duplicatesSkipped: duplicatesCount 
+        });
     } catch (err) {
         sendEvent('error', { error: err.message });
     } finally {
@@ -1258,17 +1456,26 @@ app.get('/api/ytmusic/transfer-stream', async (req, res) => {
         // If we append them in that order, the first item added (newest) remains at index 0,
         // and subsequent items go below it.
         // So the order is perfectly preserved.
-        const batchSize = 100; // Larger batch size to prevent API rate limit issues
+        const isLikedMusic = playlistId === 'LM';
+        let sequence = [];
+        let batchSize = 100;
+        
+        if (isLikedMusic) {
+            sequence = [...videoIds].reverse();
+            batchSize = 25;
+            sendEvent('info', { message: "Note : La destination est 'Titres Likés' (LM). YouTube Music fusionne automatiquement les doublons dans cette liste. Si la source contient des doublons, le nombre final de titres sera inférieur." });
+        } else {
+            sequence = [...videoIds];
+            batchSize = 100;
+        }
+        
         const batches = [];
-        for (let i = 0; i < videoIds.length; i += batchSize) {
-            batches.push(videoIds.slice(i, i + batchSize));
+        for (let i = 0; i < sequence.length; i += batchSize) {
+            batches.push(sequence.slice(i, i + batchSize));
         }
         
         let processedTracks = 0;
-        // Process batches in reverse order (oldest tracks batch first, newest tracks batch last)
-        // This ensures that the newest tracks have the newest addition timestamps on YouTube Music,
-        // making the "Le plus récent en premier" sort order match the Spotify order perfectly.
-        for (let b = batches.length - 1; b >= 0; b--) {
+        for (let b = 0; b < batches.length; b++) {
             const batch = batches[b];
             const batchStartIndex = b * batchSize;
             sendEvent('info', { message: `Adding batch ${b + 1} of ${batches.length} (tracks ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
@@ -1346,7 +1553,7 @@ app.get('/api/ytmusic/clear-liked-stream', async (req, res) => {
     
     try {
         let attempts = 0;
-        const maxAttempts = 3;
+        const maxAttempts = 10;
         let done = false;
         
         while (!done && attempts < maxAttempts) {
@@ -1373,6 +1580,16 @@ app.get('/api/ytmusic/clear-liked-stream', async (req, res) => {
                 }
                 done = true;
                 break;
+            }
+            
+            if (attempts === 1) {
+                const totalTracks = videoIds.length;
+                // Estimation formula: ~0.25s per track + 1s per batch of 100
+                const estimatedSeconds = Math.round((totalTracks * 0.25) + (Math.ceil(totalTracks / 100) * 1));
+                const minutes = Math.floor(estimatedSeconds / 60);
+                const seconds = estimatedSeconds % 60;
+                const timeStr = minutes > 0 ? `${minutes} min et ${seconds} sec` : `${seconds} sec`;
+                sendEvent('info', { message: `⏱️ Temps estimé pour la suppression de ${totalTracks} titres : environ ${timeStr}.` });
             }
             
             sendEvent('info', { message: `Passage ${attempts} : Trouvé ${videoIds.length} titres likés. Début de la suppression...` });
@@ -1450,6 +1667,21 @@ app.get('/api/ytmusic/clear-liked-stream', async (req, res) => {
         sendEvent('error', { error: err.message });
     } finally {
         res.end();
+    }
+});
+
+// API: Get number of Liked Tracks on YT Music
+app.get('/api/ytmusic/liked-metadata', async (req, res) => {
+    try {
+        const response = await runPythonHelper({
+            action: 'get_liked_tracks',
+            auth_path: YT_AUTH_PATH
+        });
+        const tracks = response.tracks || [];
+        const videoIds = tracks.map(t => t.videoId).filter(Boolean);
+        res.json({ success: true, count: videoIds.length });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -1658,21 +1890,22 @@ app.get('/api/spotify/transfer-stream', async (req, res) => {
         }
         
         let processedTracks = 0;
-        // Process batches in reverse order (oldest tracks batch first, newest tracks batch last)
-        // to preserve chronological order on Spotify!
-        for (let b = batches.length - 1; b >= 0; b--) {
-            const batch = batches[b];
-            const batchStartIndex = b * batchSize;
-            sendEvent('info', { message: `Ajout du lot ${b + 1} sur ${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
-            
-            const maxRetries = 3;
-            let attempt = 0;
-            let success = false;
-            let lastError = null;
-            
-            while (attempt < maxRetries) {
-                try {
-                    if (playlistId === 'LM') {
+        
+        if (playlistId === 'LM') {
+            // Process batches in reverse order (oldest tracks batch first, newest tracks batch last)
+            // to preserve chronological order on Spotify Liked Songs!
+            for (let b = batches.length - 1; b >= 0; b--) {
+                const batch = batches[b];
+                const batchStartIndex = b * batchSize;
+                sendEvent('info', { message: `Ajout du lot ${batches.length - b} sur ${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                
+                const maxRetries = 3;
+                let attempt = 0;
+                let success = false;
+                let lastError = null;
+                
+                while (attempt < maxRetries) {
+                    try {
                         // Save tracks for current user (Liked Songs)
                         await axios.put('https://api.spotify.com/v1/me/tracks', {
                             ids: batch
@@ -1682,7 +1915,47 @@ app.get('/api/spotify/transfer-stream', async (req, res) => {
                                 'Content-Type': 'application/json'
                             }
                         });
-                    } else {
+                        success = true;
+                        break;
+                    } catch (err) {
+                        attempt++;
+                        lastError = err;
+                        const errorMsg = err.response?.data?.error?.message || err.message;
+                        sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée : ${errorMsg}. Nouvel essai dans ${attempt * 3}s...` });
+                        await new Promise(r => setTimeout(r, attempt * 3000));
+                    }
+                }
+                
+                if (!success) {
+                    throw new Error(`Impossible de transférer le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+                }
+                
+                processedTracks += batch.length;
+                const progress = Math.min(100, Math.round((processedTracks / spotifyTrackIds.length) * 100));
+                sendEvent('progress', { 
+                    added: processedTracks,
+                    total: spotifyTrackIds.length,
+                    percent: progress,
+                    message: `${processedTracks} titres sur ${spotifyTrackIds.length} ont été transférés sur Spotify.`
+                });
+                
+                // Subtle sleep
+                await new Promise(r => setTimeout(r, 1500));
+            }
+        } else {
+            // Regular playlist: Process batches in progressive order
+            for (let b = 0; b < batches.length; b++) {
+                const batch = batches[b];
+                const batchStartIndex = b * batchSize;
+                sendEvent('info', { message: `Ajout du lot ${b + 1} sur ${batches.length} (titres ${batchStartIndex + 1}-${batchStartIndex + batch.length})...` });
+                
+                const maxRetries = 3;
+                let attempt = 0;
+                let success = false;
+                let lastError = null;
+                
+                while (attempt < maxRetries) {
+                    try {
                         // Add items to playlist
                         const uris = batch.map(id => `spotify:track:${id}`);
                         await axios.post(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
@@ -1693,33 +1966,33 @@ app.get('/api/spotify/transfer-stream', async (req, res) => {
                                 'Content-Type': 'application/json'
                             }
                         });
+                        success = true;
+                        break;
+                    } catch (err) {
+                        attempt++;
+                        lastError = err;
+                        const errorMsg = err.response?.data?.error?.message || err.message;
+                        sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée : ${errorMsg}. Nouvel essai dans ${attempt * 3}s...` });
+                        await new Promise(r => setTimeout(r, attempt * 3000));
                     }
-                    success = true;
-                    break;
-                } catch (err) {
-                    attempt++;
-                    lastError = err;
-                    const errorMsg = err.response?.data?.error?.message || err.message;
-                    sendEvent('info', { message: `⚠️ Tentative ${attempt}/${maxRetries} échouée : ${errorMsg}. Nouvel essai dans ${attempt * 3}s...` });
-                    await new Promise(r => setTimeout(r, attempt * 3000));
                 }
+                
+                if (!success) {
+                    throw new Error(`Impossible de transférer le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
+                }
+                
+                processedTracks += batch.length;
+                const progress = Math.min(100, Math.round((processedTracks / spotifyTrackIds.length) * 100));
+                sendEvent('progress', { 
+                    added: processedTracks,
+                    total: spotifyTrackIds.length,
+                    percent: progress,
+                    message: `${processedTracks} titres sur ${spotifyTrackIds.length} ont été transférés sur Spotify.`
+                });
+                
+                // Subtle sleep
+                await new Promise(r => setTimeout(r, 1500));
             }
-            
-            if (!success) {
-                throw new Error(`Impossible de transférer le lot ${b + 1} après ${maxRetries} tentatives. Dernière erreur : ${lastError.message}`);
-            }
-            
-            processedTracks += batch.length;
-            const progress = Math.min(100, Math.round((processedTracks / spotifyTrackIds.length) * 100));
-            sendEvent('progress', { 
-                added: processedTracks,
-                total: spotifyTrackIds.length,
-                percent: progress,
-                message: `${processedTracks} titres sur ${spotifyTrackIds.length} ont été transférés sur Spotify.`
-            });
-            
-            // Subtle sleep
-            await new Promise(r => setTimeout(r, 1500));
         }
         
         sendEvent('success', { message: 'Transfert vers Spotify terminé avec succès !' });
